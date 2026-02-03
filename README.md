@@ -67,15 +67,9 @@ npm start
 
 #### Option 2: Expo CLI
 
-**Start dev server (then build/run from Expo):**
-```bash
-npm run expo:start
-```
+npx expo run:android     # build & install
+npx expo start           # start Metro / dev server
 
-**Android (Expo builds and runs the same native app):**
-```bash
-npm run expo:android
-```
 
 **iOS:**
 ```bash

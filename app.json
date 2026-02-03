@@ -9,6 +9,12 @@
     "owner": null,
     "orientation": "portrait",
     "jsEngine": "hermes",
-    "platforms": ["android", "ios"]
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "android": {
+      "package": "com.leeboxuan.opsflowerpmobile"
+    }
   }
 }
