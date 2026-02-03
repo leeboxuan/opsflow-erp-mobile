@@ -1,4 +1,5 @@
 export { default as Screen } from './Screen';
+export { default as TabScreenContainer } from './TabScreenContainer';
 export { default as AppText } from './AppText';
 export { default as Button } from './Button';
 export { default as Input } from './Input';

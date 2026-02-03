@@ -2,8 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User, TenantMembership } from '../../api/types';
 import { getCurrentUser } from '../../api/auth';
 import { getUser, storeUser } from '../utils/authStorage';
-import { getToken } from '../utils/authStorage';
-import { getCurrentTenantId, setCurrentTenantId } from '../utils/authStorage';
+import { getToken, getCurrentTenantId, setCurrentTenantId } from '../utils/authStorage';
 
 interface AuthContextType {
   user: User | null;
@@ -32,12 +31,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Ensure tenantId is set in storage before calling /auth/me
-      // If not in storage, try to get from current user state
+      // Ensure tenantId is set in storage before calling /auth/me (API requires X-Tenant-Id)
       let storedTenantId = getCurrentTenantId();
       if (!storedTenantId && user?.tenantId) {
         setCurrentTenantId(user.tenantId);
         storedTenantId = user.tenantId;
+      }
+      // If still missing, restore from last stored user so /auth/me can succeed
+      if (!storedTenantId) {
+        const storedUser = getUser();
+        const fromUser =
+          storedUser?.tenantId ||
+          (storedUser as any)?.currentTenantId ||
+          (Array.isArray((storedUser as any)?.tenants) && (storedUser as any).tenants[0]
+            ? (storedUser as any).tenants[0].tenantId
+            : null);
+        if (fromUser) {
+          setCurrentTenantId(fromUser);
+          setCurrentTenantIdState(fromUser);
+          storedTenantId = fromUser;
+          console.log(`✅ Restored tenant ID from stored user: ${fromUser}`);
+        }
+      }
+      if (!storedTenantId) {
+        console.warn('⚠️ No tenant ID in storage or stored user; /auth/me may fail (X-Tenant-Id required)');
       }
 
       // Try to get user from API (headers are already set via interceptor)
@@ -102,10 +119,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('Failed to refresh user:', error);
-      // Fallback to stored user
+      // Fallback to stored user and ensure tenant ID is in storage for future requests
       const storedUser = getUser();
-      const storedTenantId = getCurrentTenantId();
+      let storedTenantId = getCurrentTenantId();
       if (storedUser) {
+        const fromUser =
+          storedUser.tenantId ||
+          (storedUser as any)?.currentTenantId ||
+          (Array.isArray((storedUser as any)?.tenants) && (storedUser as any).tenants[0]
+            ? (storedUser as any).tenants[0].tenantId
+            : null);
+        if (fromUser && !storedTenantId) {
+          setCurrentTenantId(fromUser);
+          storedTenantId = fromUser;
+        }
         setUser(storedUser as User);
         setCurrentTenantIdState(storedTenantId);
       }
