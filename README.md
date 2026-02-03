@@ -1,97 +1,201 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# OpsFlow Mobile
 
-# Getting Started
+React Native CLI mobile application for OpsFlow - Transport Management System.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Setup
 
-## Step 1: Start Metro
+### Prerequisites
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+- Node.js >= 20
+- React Native CLI
+- Android Studio (for Android development)
+- Xcode (for iOS development)
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+### Installation
 
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```bash
+npm install
 ```
 
-## Step 2: Build and run your app
+### Google Maps API Key (Required for Map Features)
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+The app uses Google Maps for live driver location tracking. You need to configure your Google Maps API key:
 
-### Android
+1. **Get a Google Maps API key:**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a project or select an existing one
+   - Enable "Maps SDK for Android" (and "Maps SDK for iOS" if targeting iOS)
+   - Create an API key
+   - Restrict the API key to your app (recommended for production)
 
-```sh
-# Using npm
+2. **Configure the API key:**
+   - Open `android/gradle.properties`
+   - Replace `YOUR_GOOGLE_MAPS_API_KEY_HERE` with your actual API key:
+   ```properties
+   GOOGLE_MAPS_API_KEY=your_actual_api_key_here
+   ```
+   - **Important:** Do NOT commit `gradle.properties` with your actual API key to git
+   - The file is already in `.gitignore` to prevent accidental commits
+
+3. **For iOS (if targeting iOS):**
+   - Add the API key to `ios/AppDelegate.mm` (not implemented yet)
+
+### Running the App
+
+You can run the app in two ways: **native (React Native CLI)** or **Expo CLI**. Both use the same code and native projects; location sharing and all features work the same.
+
+#### Option 1: Native (React Native CLI)
+
+**Android:**
+```bash
 npm run android
-
-# OR using Yarn
-yarn android
+# or
+npx react-native run-android
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
+**iOS:**
+```bash
 npm run ios
-
-# OR using Yarn
-yarn ios
+# or
+npx react-native run-ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+**Metro:**
+```bash
+npm start
+```
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+#### Option 2: Expo CLI
 
-## Step 3: Modify your app
+**Start dev server (then build/run from Expo):**
+```bash
+npm run expo:start
+```
 
-Now that you have successfully run the app, let's make changes!
+**Android (Expo builds and runs the same native app):**
+```bash
+npm run expo:android
+```
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+**iOS:**
+```bash
+npm run expo:ios
+```
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+- **Expo Go:** This app uses custom native modules (e.g. MMKV, geolocation, maps), so it **cannot** run inside the Expo Go app. Use a development build via `expo run:android` / `expo run:ios` (or `react-native run-android` / `run-ios`).
+- **Location sharing** works the same whether you use `npm run android` or `npm run expo:android`; both use the same native code.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Features
 
-## Congratulations! :tada:
+### Admin Features
 
-You've successfully run and modified your React Native App. :partying_face:
+- Dashboard with quick stats
+- Order management (create, view, edit)
+- Trip management (assign drivers, vehicles, track status)
+- Resource management (drivers, vehicles)
+- Live map showing all active drivers
 
-### Now what?
+### Driver Features
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+- Home dashboard with today's trips
+- Trip execution with stop actions (Arrived, Complete, Fail)
+- POD (Proof of Delivery) capture with photos
+- Live location sharing (optional, toggle-based)
+- Map view showing current location
 
-# Troubleshooting
+## API Configuration
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+The app connects to the OpsFlow API:
 
-# Learn More
+- Base URL: `https://opsflow-erp-api.onrender.com`
+- Authentication: JWT tokens
+- Multi-tenant: Uses `x-tenant-id` header
 
-To learn more about React Native, take a look at the following resources:
+Configuration is in `src/config/env.ts`.
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+## Location Tracking
+
+### Driver Location Tracking
+
+- Drivers can toggle "Share Live Location" to allow admins to see their location
+- Location updates are sent to the API every 5 seconds or when moved >20 meters
+- Location tracking respects the share preference and stops on logout
+
+### Admin Live Map
+
+- Admin users can view all active drivers on a live map
+- Driver locations are polled every 5 seconds
+- Map shows driver markers with labels and last updated time
+
+## Project Structure
+
+```
+src/
+├── api/              # API client and functions
+├── app/              # App-level configuration
+│   └── navigation/   # Navigation stacks and tabs
+├── features/         # Feature-based screens (auth, orders, trips, etc.)
+├── screens/          # Screen components (admin, driver)
+│   ├── admin/        # Admin-specific screens
+│   └── driver/       # Driver-specific screens
+├── shared/           # Shared components and utilities
+│   ├── context/      # React contexts (Auth, etc.)
+│   ├── theme/        # Design system (colors, typography, spacing)
+│   ├── ui/           # Reusable UI components
+│   └── utils/        # Utility functions (auth storage, etc.)
+└── location/         # Location tracking service
+```
+
+## Development
+
+### Adding New Screens
+
+1. Create screen component in appropriate folder (`screens/admin/` or `screens/driver/`)
+2. Add route to appropriate navigator (`AdminTabs.tsx` or `DriverTabs.tsx`)
+3. Update TypeScript param lists
+
+### API Integration
+
+- All API calls use `axios` via `src/api/client.ts`
+- React Query (`@tanstack/react-query`) is used for data fetching and caching
+- JWT tokens and `x-tenant-id` headers are automatically added via interceptors
+
+## Troubleshooting
+
+### "The native NitroModules Turbo/Native-Module could not be found"
+
+This can happen if the Nitro native library (used by `react-native-mmkv`) wasn’t built or linked. Try:
+
+1. **Full clean and rebuild** (from project root):
+   ```bash
+   cd android
+   gradlew clean
+   cd ..
+   npx react-native run-android
+   ```
+   If `gradlew clean` fails with an Expo Gradle error, skip it and run only:
+   ```bash
+   npx react-native run-android
+   ```
+   and ensure you’re not running an old installed build.
+
+2. **Confirm Nitro is linked:**  
+   `npx react-native config` should list both `react-native-nitro-modules` and `react-native-mmkv`.
+
+3. **Nitro Gradle props** are set in `android/gradle.properties` (`Nitro_ndkVersion`, `Nitro_compileSdkVersion`, etc.); don’t remove them.
+
+### Map not showing
+
+- Verify `GOOGLE_MAPS_API_KEY` is set in `android/gradle.properties`
+- Check that the API key has "Maps SDK for Android" enabled
+- Ensure the API key is not restricted (or restrict it to your app's package name: `com.opsflowerpmobile`)
+
+### Location tracking not working
+
+- Ensure location permissions are granted on the device
+- Check that "Share Live Location" toggle is enabled in Driver Map screen
+- Verify the device has location services enabled
+
+## License
+
+Private - OpsFlow

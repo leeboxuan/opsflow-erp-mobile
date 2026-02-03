@@ -1,11 +1,7 @@
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { getDefaultConfig } = require('expo/metro-config');
 
 /**
- * Metro configuration
- * https://reactnative.dev/docs/metro
- *
- * @type {import('@react-native/metro-config').MetroConfig}
+ * Metro: Expo's default config supports React Native and Expo CLI.
+ * Works for: npm run start, npm run android, npm run expo:android, etc.
  */
-const config = {};
-
-module.exports = mergeConfig(getDefaultConfig(__dirname), config);
+module.exports = getDefaultConfig(__dirname);

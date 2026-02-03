@@ -1,4 +1,14 @@
 {
   "name": "opsflowERPMobile",
-  "displayName": "OpsFlow ERP"
+  "displayName": "OpsFlow",
+  "expo": {
+    "name": "OpsFlow",
+    "slug": "opsflow-erp-mobile",
+    "version": "0.0.1",
+    "scheme": "opsflow-erp",
+    "owner": null,
+    "orientation": "portrait",
+    "jsEngine": "hermes",
+    "platforms": ["android", "ios"]
+  }
 }

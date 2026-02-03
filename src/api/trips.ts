@@ -54,21 +54,3 @@ export async function getStopById(
   }
 }
 
-/**
- * Update stop status (e.g., mark as arrived or completed)
- */
-export async function updateStopStatus(
-  tripId: string,
-  stopId: string,
-  status: Stop['status']
-): Promise<Stop> {
-  try {
-    const response = await apiClient.patch<Stop>(
-      `/trips/${tripId}/stops/${stopId}`,
-      { status }
-    );
-    return response.data;
-  } catch (error) {
-    throw new Error(getErrorMessage(error));
-  }
-}

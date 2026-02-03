@@ -1,94 +1,278 @@
-import * as Keychain from 'react-native-keychain';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createMMKV } from 'react-native-mmkv';
 
 const TOKEN_KEY = 'opsflow_jwt_token';
 const USER_KEY = 'opsflow_user';
+const DRIVER_MODE_KEY = 'opsflow_driver_mode';
+const CURRENT_TENANT_ID_KEY = 'opsflow_current_tenant_id';
+const SHARE_LIVE_LOCATION_KEY = 'opsflow_share_live_location';
+
+// Create MMKV storage instance
+const storage = createMMKV({
+  id: 'opsflow-auth-storage',
+  encryptionKey: 'opsflow-auth-encryption-key',
+});
 
 export interface StoredUser {
   id: string;
   username: string;
   email?: string;
+  role?: string;
+  tenant?: string;
+  tenantId?: string;
 }
 
 /**
- * Store JWT token securely using Keychain
+ * Store JWT token using MMKV (synchronous)
  */
-export async function storeToken(token: string): Promise<boolean> {
+export function setToken(token: string): boolean {
   try {
-    await Keychain.setInternetCredentials(TOKEN_KEY, TOKEN_KEY, token);
+    if (!token || typeof token !== 'string') {
+      console.error('❌ setToken: Invalid token provided', { tokenType: typeof token });
+      return false;
+    }
+
+    storage.set(TOKEN_KEY, token);
+    console.log('✅ Token saved successfully to MMKV');
     return true;
   } catch (error) {
-    console.error('Failed to store token:', error);
+    console.error('❌ Failed to store token:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return false;
   }
 }
 
 /**
- * Retrieve JWT token from Keychain
+ * Retrieve JWT token from MMKV (synchronous)
  */
-export async function getToken(): Promise<string | null> {
+export function getToken(): string | null {
   try {
-    const credentials = await Keychain.getInternetCredentials(TOKEN_KEY);
-    if (credentials && credentials.password) {
-      return credentials.password;
+    const token = storage.getString(TOKEN_KEY);
+    if (token) {
+      return token;
     }
     return null;
   } catch (error) {
-    console.error('Failed to get token:', error);
+    console.error('❌ Failed to get token:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return null;
   }
 }
 
 /**
- * Remove JWT token from Keychain
+ * Remove JWT token from MMKV (synchronous)
  */
-export async function removeToken(): Promise<boolean> {
+export function clearToken(): void {
   try {
-    await Keychain.resetInternetCredentials(TOKEN_KEY);
+    storage.remove(TOKEN_KEY);
+    console.log('✅ Token cleared from MMKV');
+  } catch (error) {
+    console.error('❌ Failed to clear token:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+}
+
+/**
+ * Store user data in MMKV (synchronous)
+ */
+export function storeUser(user: StoredUser): boolean {
+  try {
+    if (!user || !user.id) {
+      console.error('❌ storeUser: Invalid user data provided', { user });
+      return false;
+    }
+
+    storage.set(USER_KEY, JSON.stringify(user));
+    console.log('✅ User data saved successfully to MMKV', { userId: user.id });
     return true;
   } catch (error) {
-    console.error('Failed to remove token:', error);
+    console.error('❌ Failed to store user:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return false;
   }
 }
 
 /**
- * Store user data in AsyncStorage (less sensitive, can use AsyncStorage)
+ * Get stored user data from MMKV (synchronous)
  */
-export async function storeUser(user: StoredUser): Promise<boolean> {
+export function getUser(): StoredUser | null {
   try {
-    await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
-    return true;
-  } catch (error) {
-    console.error('Failed to store user:', error);
-    return false;
-  }
-}
-
-/**
- * Get stored user data
- */
-export async function getUser(): Promise<StoredUser | null> {
-  try {
-    const userStr = await AsyncStorage.getItem(USER_KEY);
+    const userStr = storage.getString(USER_KEY);
     if (userStr) {
-      return JSON.parse(userStr) as StoredUser;
+      const user = JSON.parse(userStr) as StoredUser;
+      return user;
     }
     return null;
   } catch (error) {
-    console.error('Failed to get user:', error);
+    console.error('❌ Failed to get user:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return null;
   }
 }
 
 /**
- * Clear all stored auth data
+ * Clear all stored auth data (synchronous)
  */
-export async function clearAuth(): Promise<void> {
-  await removeToken();
+export function clearAuth(): void {
   try {
-    await AsyncStorage.removeItem(USER_KEY);
+    clearToken();
+    storage.remove(USER_KEY);
+    clearCurrentTenantId();
+    clearSelectedMode();
+    console.log('✅ All auth data cleared from MMKV');
   } catch (error) {
-    console.error('Failed to clear user data:', error);
+    console.error('❌ Failed to clear auth data:', error);
+    console.error('   Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+}
+
+// Legacy async functions for backwards compatibility (now synchronous wrappers)
+export async function storeToken(token: string): Promise<boolean> {
+  return setToken(token);
+}
+
+export async function removeToken(): Promise<boolean> {
+  clearToken();
+  return true;
+}
+
+/**
+ * Store selected mode preference (synchronous)
+ * Mode: 'admin' | 'driver'
+ */
+export type SelectedMode = 'admin' | 'driver';
+
+export function setSelectedMode(mode: SelectedMode): void {
+  try {
+    storage.set(DRIVER_MODE_KEY, mode);
+    console.log(`✅ Selected mode set to: ${mode}`);
+  } catch (error) {
+    console.error('❌ Failed to set selected mode:', error);
+  }
+}
+
+/**
+ * Get selected mode preference (synchronous)
+ * Returns 'admin' by default for admin users
+ */
+export function getSelectedMode(): SelectedMode {
+  try {
+    const mode = storage.getString(DRIVER_MODE_KEY);
+    if (mode === 'admin' || mode === 'driver') {
+      return mode;
+    }
+    return 'admin'; // Default to admin
+  } catch (error) {
+    console.error('❌ Failed to get selected mode:', error);
+    return 'admin';
+  }
+}
+
+/**
+ * Clear selected mode preference (resets to admin)
+ */
+export function clearSelectedMode(): void {
+  try {
+    storage.remove(DRIVER_MODE_KEY);
+  } catch (error) {
+    console.error('❌ Failed to clear selected mode:', error);
+  }
+}
+
+// Legacy functions for backwards compatibility
+export function setDriverMode(enabled: boolean): void {
+  setSelectedMode(enabled ? 'driver' : 'admin');
+}
+
+export function getDriverMode(): boolean {
+  return getSelectedMode() === 'driver';
+}
+
+/**
+ * Store current tenant ID (synchronous)
+ */
+export function setCurrentTenantId(tenantId: string): void {
+  try {
+    storage.set(CURRENT_TENANT_ID_KEY, tenantId);
+    console.log(`✅ Current tenant ID saved: ${tenantId}`);
+  } catch (error) {
+    console.error('❌ Failed to set current tenant ID:', error);
+  }
+}
+
+/**
+ * Get current tenant ID (synchronous)
+ */
+export function getCurrentTenantId(): string | null {
+  try {
+    const tenantId = storage.getString(CURRENT_TENANT_ID_KEY);
+    return tenantId || null;
+  } catch (error) {
+    console.error('❌ Failed to get current tenant ID:', error);
+    return null;
+  }
+}
+
+/**
+ * Clear current tenant ID
+ */
+export function clearCurrentTenantId(): void {
+  try {
+    storage.remove(CURRENT_TENANT_ID_KEY);
+  } catch (error) {
+    console.error('❌ Failed to clear current tenant ID:', error);
+  }
+}
+
+/**
+ * Store "Share Live Location" preference (synchronous)
+ */
+export function setShareLiveLocation(enabled: boolean): void {
+  try {
+    storage.set(SHARE_LIVE_LOCATION_KEY, enabled);
+    console.log(`✅ Share live location set to: ${enabled}`);
+  } catch (error) {
+    console.error('❌ Failed to set share live location:', error);
+  }
+}
+
+/**
+ * Get "Share Live Location" preference (synchronous)
+ * Returns false by default
+ */
+export function getShareLiveLocation(): boolean {
+  try {
+    return storage.getBoolean(SHARE_LIVE_LOCATION_KEY) ?? false;
+  } catch (error) {
+    console.error('❌ Failed to get share live location:', error);
+    return false;
+  }
+}
+
+/**
+ * Clear "Share Live Location" preference
+ */
+export function clearShareLiveLocation(): void {
+  try {
+    storage.remove(SHARE_LIVE_LOCATION_KEY);
+  } catch (error) {
+    console.error('❌ Failed to clear share live location:', error);
   }
 }

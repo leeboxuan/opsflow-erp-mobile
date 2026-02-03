@@ -1,14 +1,14 @@
 import React from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { FlatList, StyleSheet, View, TouchableOpacity, Text } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../app/navigation/RootStackNavigator';
+import { AdminStackParamList } from '../../app/navigation/AdminStack';
 import Screen from '../../shared/ui/Screen';
 import Card from '../../shared/ui/Card';
 import Badge from '../../shared/ui/Badge';
 import AppText from '../../shared/ui/AppText';
 import { theme } from '../../shared/theme/theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'TripsList'>;
+type Props = NativeStackScreenProps<AdminStackParamList, 'TripsList'>;
 
 interface Trip {
   id: string;

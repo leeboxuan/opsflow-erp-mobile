@@ -1,3 +1,3 @@
 export const ENV = {
-  API_BASE_URL: 'http://localhost:3001', // will be replaced with Render URL
+  API_BASE_URL: 'https://opsflow-erp-api.onrender.com', // will be replaced with Render URL
 };
