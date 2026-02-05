@@ -1,6 +1,8 @@
+import axios from 'axios';
 import { apiClient, getErrorMessage } from './client';
 import { LoginRequest, LoginResponse } from './types';
-import { setToken, storeUser, setCurrentTenantId } from '../shared/utils/authStorage';
+import { setToken, setRefreshToken, setExpiresAt, getRefreshToken, storeUser, setCurrentTenantId } from '../shared/utils/authStorage';
+import { ENV } from '../config/env';
 
 /**
  * Login with email and password
@@ -12,10 +14,16 @@ export async function login(
   try {
     console.log('🔐 Starting login process...');
     
-    // Call login endpoint
+    // Call login endpoint. Send both email and username so backends that expect
+    // Passport's default "username" field (e.g. NestJS LocalStrategy) still work.
+    const body = {
+      email: credentials.email,
+      username: credentials.email,
+      password: credentials.password,
+    };
     const response = await apiClient.post<LoginResponse>(
       '/auth/login',
-      credentials
+      body
     );
 
     console.log('📦 Login response received:', {
@@ -28,6 +36,8 @@ export async function login(
       response.data.access_token ||
       (response.data as any).accessToken ||
       null;
+    const refreshToken =
+      (response.data as any).refresh_token ?? (response.data as any).refreshToken ?? null;
 
     if (!accessToken) {
       console.error('❌ No access token in response:', response.data);
@@ -35,9 +45,12 @@ export async function login(
     }
 
     console.log('💾 Storing token...');
-    // Store token (synchronous with MMKV)
     const tokenStored = setToken(accessToken);
-    
+    if (refreshToken) setRefreshToken(refreshToken);
+    const expiresAt = (response.data as { expires_at?: string | number; expiresAt?: string | number }).expires_at
+      ?? (response.data as { expires_at?: string | number; expiresAt?: string | number }).expiresAt;
+    if (expiresAt != null) setExpiresAt(expiresAt);
+
     if (!tokenStored) {
       console.error('❌ Failed to store token - setToken returned false');
       throw new Error('Failed to store authentication token');
@@ -47,21 +60,37 @@ export async function login(
 
     // Extract and store tenantId IMMEDIATELY from login response (before /auth/me)
     const loginUser = response.data.user;
-    // Support both camelCase and snake_case
-    const tenantId = loginUser?.tenantId || (loginUser as any)?.tenant_id;
-    
+    const data = response.data as any;
+    // Extract from every possible shape the API might use
+    const tenantId =
+      loginUser?.tenantId ??
+      loginUser?.tenant_id ??
+      loginUser?.currentTenantId ??
+      (Array.isArray(loginUser?.tenants) && loginUser.tenants[0]
+        ? loginUser.tenants[0].tenantId ?? loginUser.tenants[0].tenant_id
+        : null) ??
+      data?.tenantId ??
+      data?.tenant_id;
+
     if (tenantId) {
       console.log(`💾 Storing tenantId from login response: ${tenantId}`);
       setCurrentTenantId(tenantId);
       console.log('✅ TenantId stored successfully');
     } else {
-      console.warn('⚠️ No tenantId in login response, will try /auth/me');
+      console.warn('⚠️ No tenantId in login response; /auth/me may require X-Tenant-Id');
     }
 
-    // Store user data if provided
+    // Store user data if provided (include normalized tenant and role for RBAC / restart)
     if (loginUser) {
+      const userToStore = {
+        ...loginUser,
+        role: (loginUser as { role?: string }).role ?? (loginUser as { user_role?: string }).user_role,
+        tenantId: tenantId ?? loginUser.tenantId ?? loginUser.tenant_id,
+        currentTenantId: tenantId ?? loginUser.currentTenantId,
+        tenants: loginUser.tenants ?? loginUser.tenant_list,
+      };
       console.log('💾 Storing user data...');
-      const userStored = storeUser(loginUser);
+      const userStored = storeUser(userToStore);
       if (!userStored) {
         console.warn('⚠️ Failed to store user data, but continuing...');
       } else {
@@ -121,23 +150,40 @@ export async function getCurrentUser() {
   }
 }
 
+const cleanBaseUrl = ENV.API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+
 /**
- * Refresh JWT token (if refresh token is implemented)
+ * Refresh JWT token using stored refresh token.
+ * Calls POST /auth/refresh with body { refreshToken } (no apiClient to avoid 401 interceptor).
+ * Stores new access_token and optional refresh_token from response.
  */
 export async function refreshToken(): Promise<string | null> {
+  const stored = getRefreshToken();
+  if (!stored) return null;
+
   try {
-    const response = await apiClient.post<{ access_token: string }>(
-      '/auth/refresh'
-    );
-    const accessToken =
-      response.data.access_token || (response.data as any).accessToken;
-    if (accessToken) {
-      setToken(accessToken);
-      return accessToken;
-    }
-    return null;
+    const response = await axios.post<{
+      access_token?: string;
+      accessToken?: string;
+      refresh_token?: string;
+      refreshToken?: string;
+      expires_at?: string | number;
+      expiresAt?: string | number;
+    }>(`${cleanBaseUrl}/api/auth/refresh`, { refreshToken: stored }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+
+    const accessToken = response.data.access_token ?? response.data.accessToken ?? null;
+    if (!accessToken) return null;
+
+    setToken(accessToken);
+    const newRefresh = response.data.refresh_token ?? response.data.refreshToken;
+    if (newRefresh) setRefreshToken(newRefresh);
+    const expiresAt = response.data.expires_at ?? response.data.expiresAt;
+    if (expiresAt != null) setExpiresAt(expiresAt);
+    return accessToken;
   } catch {
-    // If refresh fails, return null to trigger re-login
     return null;
   }
 }

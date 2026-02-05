@@ -1,10 +1,11 @@
 import { createMMKV } from 'react-native-mmkv';
 
 const TOKEN_KEY = 'opsflow_jwt_token';
+const REFRESH_TOKEN_KEY = 'opsflow_refresh_token';
+const EXPIRES_AT_KEY = 'opsflow_token_expires_at';
 const USER_KEY = 'opsflow_user';
 const DRIVER_MODE_KEY = 'opsflow_driver_mode';
 const CURRENT_TENANT_ID_KEY = 'opsflow_current_tenant_id';
-const SHARE_LIVE_LOCATION_KEY = 'opsflow_share_live_location';
 
 // Create MMKV storage instance
 const storage = createMMKV({
@@ -65,12 +66,73 @@ export function getToken(): string | null {
 }
 
 /**
- * Remove JWT token from MMKV (synchronous)
+ * Store refresh token (synchronous)
+ */
+export function setRefreshToken(refreshToken: string): boolean {
+  try {
+    if (!refreshToken || typeof refreshToken !== 'string') return false;
+    storage.set(REFRESH_TOKEN_KEY, refreshToken);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to store refresh token:', error);
+    return false;
+  }
+}
+
+/**
+ * Get stored refresh token (synchronous)
+ */
+export function getRefreshToken(): string | null {
+  try {
+    return storage.getString(REFRESH_TOKEN_KEY) ?? null;
+  } catch (error) {
+    console.error('❌ Failed to get refresh token:', error);
+    return null;
+  }
+}
+
+/**
+ * Store token expiry (synchronous).
+ * Value: ISO date string or Unix seconds. Pass null to clear.
+ */
+export function setExpiresAt(expiresAt: number | string | null): void {
+  try {
+    if (expiresAt == null) {
+      storage.remove(EXPIRES_AT_KEY);
+      return;
+    }
+    storage.set(EXPIRES_AT_KEY, typeof expiresAt === 'number' ? String(expiresAt) : expiresAt);
+  } catch (error) {
+    console.error('❌ Failed to store expiresAt:', error);
+  }
+}
+
+/**
+ * Get stored token expiry as Unix seconds, or null.
+ */
+export function getExpiresAt(): number | null {
+  try {
+    const raw = storage.getString(EXPIRES_AT_KEY);
+    if (raw == null || raw === '') return null;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n <= 1e12 ? n : Math.floor(n / 1000); // assume ms if large
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+  } catch (error) {
+    console.error('❌ Failed to get expiresAt:', error);
+    return null;
+  }
+}
+
+/**
+ * Remove JWT and refresh tokens from MMKV (synchronous)
  */
 export function clearToken(): void {
   try {
     storage.remove(TOKEN_KEY);
-    console.log('✅ Token cleared from MMKV');
+    storage.remove(REFRESH_TOKEN_KEY);
+    storage.remove(EXPIRES_AT_KEY);
+    console.log('✅ Tokens cleared from MMKV');
   } catch (error) {
     console.error('❌ Failed to clear token:', error);
     console.error('   Error details:', {
@@ -241,38 +303,3 @@ export function clearCurrentTenantId(): void {
   }
 }
 
-/**
- * Store "Share Live Location" preference (synchronous)
- */
-export function setShareLiveLocation(enabled: boolean): void {
-  try {
-    storage.set(SHARE_LIVE_LOCATION_KEY, enabled);
-    console.log(`✅ Share live location set to: ${enabled}`);
-  } catch (error) {
-    console.error('❌ Failed to set share live location:', error);
-  }
-}
-
-/**
- * Get "Share Live Location" preference (synchronous)
- * Returns false by default
- */
-export function getShareLiveLocation(): boolean {
-  try {
-    return storage.getBoolean(SHARE_LIVE_LOCATION_KEY) ?? false;
-  } catch (error) {
-    console.error('❌ Failed to get share live location:', error);
-    return false;
-  }
-}
-
-/**
- * Clear "Share Live Location" preference
- */
-export function clearShareLiveLocation(): void {
-  try {
-    storage.remove(SHARE_LIVE_LOCATION_KEY);
-  } catch (error) {
-    console.error('❌ Failed to clear share live location:', error);
-  }
-}

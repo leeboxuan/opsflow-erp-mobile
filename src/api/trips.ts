@@ -26,6 +26,29 @@ export async function getTripById(tripId: string): Promise<Trip> {
 }
 
 /**
+ * Driver location for a trip (admin view).
+ * Prefer: GET /trips/:tripId/location
+ * Response: { lat, lng, capturedAt?, accuracy? }
+ */
+export interface TripLocationResponse {
+  lat: number;
+  lng: number;
+  capturedAt?: string;
+  accuracy?: number;
+}
+
+export async function getTripLocation(tripId: string): Promise<TripLocationResponse | null> {
+  try {
+    const response = await apiClient.get<TripLocationResponse>(`/trips/${tripId}/location`);
+    return response.data;
+  } catch (error: unknown) {
+    const msg = getErrorMessage(error);
+    if (msg.includes('404') || msg.includes('not found')) return null;
+    throw new Error(msg);
+  }
+}
+
+/**
  * Get all stops for a trip
  */
 export async function getTripStops(tripId: string): Promise<Stop[]> {

@@ -1,16 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { useQuery } from '@tanstack/react-query';
 import { DriverTabsParamList } from '../../app/navigation/DriverTabs';
 import { getTrips } from '../../api/driver';
 import { getToken } from '../../shared/utils/authStorage';
-import { getLocationTracker } from '../../location/LocationTracker';
 import Screen from '../../shared/ui/Screen';
 import Card from '../../shared/ui/Card';
 import AppText from '../../shared/ui/AppText';
 import Badge from '../../shared/ui/Badge';
 import Button from '../../shared/ui/Button';
+import ModeBadge from '../../shared/ui/ModeBadge';
 import { theme } from '../../shared/theme/theme';
 import { Trip } from '../../api/types';
 
@@ -30,13 +30,6 @@ function getNextStopAddress(trip: Trip): string | null {
 }
 
 export default function DriverHomeScreen({ navigation }: Props) {
-  const [lastLocation, setLastLocation] = useState<{ lat: number; lng: number; timeAgo: number } | null>(null);
-  const tracker = getLocationTracker({
-    onLocationUpdate: (location) => {
-      setLastLocation({ lat: location.lat, lng: location.lng, timeAgo: 0 });
-    },
-  });
-
   const today = useMemo(() => new Date(), []);
   const hasToken = Boolean(getToken());
   const { data: todayTrips = [], isLoading } = useQuery({
@@ -45,33 +38,14 @@ export default function DriverHomeScreen({ navigation }: Props) {
     enabled: hasToken,
   });
 
-  useEffect(() => {
-    tracker.startTracking().catch((error) => {
-      console.error('Failed to start location tracking:', error);
-    });
-    const interval = setInterval(() => {
-      const location = tracker.getLastSentLocation();
-      if (location) {
-        setLastLocation({
-          lat: location.lat,
-          lng: location.lng,
-          timeAgo: tracker.getTimeSinceLastUpdate(),
-        });
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleViewMap = () => {
-    navigation.navigate('TripsTab', { screen: 'DriverMap' });
-  };
-
   const firstTrip = todayTrips[0];
   const nextStop = firstTrip ? getNextStopAddress(firstTrip) : null;
 
   const handleViewTrips = () => {
     navigation.navigate('TripsTab', { screen: 'MyTrips' });
   };
+
+  const safeTodayTrips = Array.isArray(todayTrips) ? todayTrips : [];
 
   const handleNavigate = (address: string) => {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
@@ -85,7 +59,10 @@ export default function DriverHomeScreen({ navigation }: Props) {
           <AppText variant="h1" weight="bold" color="text" style={styles.title}>
             Driver Dashboard
           </AppText>
-          <Badge label="DRIVER MODE" variant="info" />
+          <View style={styles.badges}>
+            <Badge label="DRIVER MODE" variant="info" />
+            <ModeBadge />
+          </View>
         </Card>
 
         {isLoading ? (
@@ -129,7 +106,7 @@ export default function DriverHomeScreen({ navigation }: Props) {
                   No trips scheduled for today.
                 </AppText>
               ) : (
-                todayTrips.map((trip) => {
+                safeTodayTrips.map((trip) => {
                   const nextAddr = getNextStopAddress(trip);
                   return (
                     <Card
@@ -142,7 +119,7 @@ export default function DriverHomeScreen({ navigation }: Props) {
                       }
                       style={styles.tripItem}>
                       <View style={styles.tripHeader}>
-                        <AppText variant="h4" weight="bold" color="text">
+                        <AppText variant="h3" weight="bold" color="text">
                           {getTripDisplayNumber(trip)}
                         </AppText>
                         <Badge
@@ -172,12 +149,6 @@ export default function DriverHomeScreen({ navigation }: Props) {
             onPress={handleViewTrips}
             style={styles.actionButton}
           />
-          <Button
-            title="View Map"
-            onPress={handleViewMap}
-            variant="outline"
-            style={styles.actionButton}
-          />
         </Card>
       </ScrollView>
     </Screen>
@@ -187,6 +158,12 @@ export default function DriverHomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     padding: theme.spacing.md,
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
   },
   headerCard: {
     marginBottom: theme.spacing.md,

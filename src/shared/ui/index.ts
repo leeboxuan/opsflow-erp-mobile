@@ -6,3 +6,4 @@ export { default as Input } from './Input';
 export { default as Card } from './Card';
 export { default as Badge } from './Badge';
 export { default as CargoLogo } from './CargoLogo';
+export { default as ModeBadge } from './ModeBadge';

@@ -11,7 +11,7 @@ import AppText from './AppText';
 
 interface ButtonProps extends TouchableOpacityProps {
   title: string;
-  variant?: 'primary' | 'secondary' | 'outline' | 'text';
+  variant?: 'primary' | 'secondary' | 'outline' | 'text' | 'destructive';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
 }
@@ -30,6 +30,7 @@ export default function Button({
     secondary: styles.secondary,
     outline: styles.outline,
     text: styles.text,
+    destructive: styles.destructive,
   };
 
   const sizeStyles = {
@@ -40,7 +41,7 @@ export default function Button({
 
   const textVariant = variant === 'outline' || variant === 'text' ? 'body' : 'body';
   const textColor =
-    variant === 'primary' || variant === 'secondary'
+    variant === 'primary' || variant === 'secondary' || variant === 'destructive'
       ? 'white'
       : variant === 'outline'
       ? 'primary'
@@ -59,7 +60,7 @@ export default function Button({
       activeOpacity={0.7}
       {...props}>
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' || variant === 'secondary' ? theme.colors.white : theme.colors.primary} />
+        <ActivityIndicator color={variant === 'primary' || variant === 'secondary' || variant === 'destructive' ? theme.colors.white : theme.colors.primary} />
       ) : (
         <AppText variant={textVariant} weight="semibold" color={textColor}>
           {title}
@@ -89,6 +90,9 @@ const styles = StyleSheet.create({
   },
   text: {
     backgroundColor: 'transparent',
+  },
+  destructive: {
+    backgroundColor: theme.colors.error,
   },
   small: {
     paddingVertical: theme.spacing.sm,

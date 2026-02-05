@@ -1,17 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Switch, Alert, ScrollView } from 'react-native';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
+import { View, StyleSheet, Switch, Alert, ScrollView, TouchableOpacity } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AdminStackParamList } from '../../app/navigation/AdminStack';
 import { DriverStackParamList } from '../../app/navigation/DriverStack';
-import { resetLocationTracker } from '../../location/LocationTracker';
+import { stopBackgroundTracking } from '../../location/locationService';
 import Screen from '../../shared/ui/Screen';
 import Card from '../../shared/ui/Card';
 import AppText from '../../shared/ui/AppText';
 import Button from '../../shared/ui/Button';
 import Badge from '../../shared/ui/Badge';
+import Input from '../../shared/ui/Input';
 import { theme } from '../../shared/theme/theme';
 import { useAuth } from '../../shared/context/AuthContext';
+import { useAuthRole } from '../../shared/hooks/useAuthRole';
 import { logout } from '../../api/auth';
 import { getSelectedMode, SelectedMode } from '../../shared/utils/authStorage';
 import { setSelectedModeGlobal } from '../../app/navigation/AuthenticatedRootNavigator';
@@ -23,9 +25,12 @@ type Props =
 
 export default function SettingsScreen({ navigation }: Props) {
   const queryClient = useQueryClient();
-  const { user, setUser, currentTenantId, setCurrentTenantId } = useAuth();
+  const { user, setUser, currentTenantId, setCurrentTenantId, refreshUser, isSuperAdmin } = useAuth();
+  const { role: authRole, canEditRoute } = useAuthRole();
   const [selectedMode, setSelectedModeState] = useState<SelectedMode>('admin');
   const [loading, setLoading] = useState(false);
+  const [manualTenantId, setManualTenantId] = useState('');
+  const [savingTenant, setSavingTenant] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -82,34 +87,45 @@ export default function SettingsScreen({ navigation }: Props) {
     );
   };
 
-  const handleLogout = async () => {
+  const performLogout = async () => {
+    setLoading(true);
+    try {
+      await stopBackgroundTracking();
+      await logout();
+      setUser(null);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to logout. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
     Alert.alert(
       'Logout',
-      'Are you sure you want to logout?',
+      'Are you sure you want to logout? You can sign in again afterward.',
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            setLoading(true);
-            try {
-              // Stop location tracking before logout
-              resetLocationTracker();
-              await logout();
-              // Clear user state - RootStackNavigator will automatically switch to Login
-              setUser(null);
-              // RootStackNavigator will re-render and show Login screen based on isAuthenticated = false
-            } catch (error) {
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
+        { text: 'Logout', style: 'destructive', onPress: performLogout },
       ]
     );
   };
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={handleLogout}
+          disabled={loading}
+          style={styles.headerLogout}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <AppText variant="body" weight="semibold" color="white">
+            {loading ? '…' : 'Logout'}
+          </AppText>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, loading]);
 
   if (!user) {
     return (
@@ -124,18 +140,57 @@ export default function SettingsScreen({ navigation }: Props) {
   const hasMultipleTenants = user.tenants && user.tenants.length > 1;
   const tenants = user.tenants || [];
 
-  // Show error if no tenant selected
-  const showTenantError = !currentTenantId;
+  // Show tenant error only when non-superadmin and no tenant (SuperAdmin can have null tenant)
+  const showTenantError = !isSuperAdmin && !currentTenantId;
+
+  const handleSaveManualTenant = async () => {
+    const id = manualTenantId.trim();
+    if (!id) {
+      Alert.alert('Missing tenant ID', 'Please enter your tenant ID.');
+      return;
+    }
+    setSavingTenant(true);
+    try {
+      setCurrentTenantId(id);
+      await refreshUser();
+      setManualTenantId('');
+      Alert.alert('Tenant set', 'Your tenant has been set. Data should load correctly now.');
+    } catch (e) {
+      Alert.alert('Error', 'Could not load profile with that tenant. Check the ID and try again.');
+    } finally {
+      setSavingTenant(false);
+    }
+  };
 
   return (
     <Screen scrollable>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Tenant Error Message */}
+        {/* No tenant: show manual entry */}
         {showTenantError && (
           <Card style={[styles.section, styles.errorCard]}>
             <AppText variant="body" weight="semibold" color="error" style={styles.errorText}>
-              ⚠️ No tenant selected. Pick a tenant in Settings.
+              No tenant selected
             </AppText>
+            <AppText variant="body" color="textSecondary" style={styles.tenantHelp}>
+              The server did not return a tenant with your login. If you have a tenant ID from your
+              administrator, enter it below and tap "Use this tenant".
+            </AppText>
+            <Input
+              label="Tenant ID"
+              placeholder="e.g. your-tenant-uuid"
+              value={manualTenantId}
+              onChangeText={setManualTenantId}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!savingTenant}
+            />
+            <Button
+              title="Use this tenant"
+              onPress={handleSaveManualTenant}
+              loading={savingTenant}
+              disabled={savingTenant || !manualTenantId.trim()}
+              style={styles.manualTenantButton}
+            />
           </Card>
         )}
 
@@ -245,11 +300,27 @@ export default function SettingsScreen({ navigation }: Props) {
           </Card>
         )}
 
-        {/* Debug Information */}
+        {/* Debug Information (dev) */}
         <Card style={styles.section}>
           <AppText variant="h3" weight="bold" color="text" style={styles.sectionTitle}>
             Debug Info
           </AppText>
+          <View style={styles.infoRow}>
+            <AppText variant="label" color="textSecondary">
+              Role (RBAC)
+            </AppText>
+            <AppText variant="body" color="text" style={styles.value}>
+              {authRole ?? user.role ?? '—'}
+            </AppText>
+          </View>
+          <View style={styles.infoRow}>
+            <AppText variant="label" color="textSecondary">
+              Can edit route
+            </AppText>
+            <AppText variant="body" color="text" style={styles.value}>
+              {canEditRoute ? 'Yes' : 'No'}
+            </AppText>
+          </View>
           <View style={styles.infoRow}>
             <AppText variant="label" color="textSecondary">
               User Role
@@ -298,13 +369,16 @@ export default function SettingsScreen({ navigation }: Props) {
           </Card>
         )}
 
-        {/* Logout Button */}
+        {/* Logout Button - sign out to log in again with a different account */}
         <Card style={styles.section}>
+          <AppText variant="body" color="textSecondary" style={styles.logoutHint}>
+            Sign out to log in with a different account.
+          </AppText>
           <Button
             title="Logout"
             onPress={handleLogout}
             loading={loading}
-            variant="outline"
+            variant="destructive"
             style={styles.logoutButton}
           />
         </Card>
@@ -333,6 +407,13 @@ const styles = StyleSheet.create({
   },
   errorText: {
     textAlign: 'center',
+  },
+  tenantHelp: {
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  manualTenantButton: {
+    marginTop: theme.spacing.sm,
   },
   warningText: {
     marginTop: theme.spacing.xs,
@@ -371,7 +452,15 @@ const styles = StyleSheet.create({
   toggleDescription: {
     marginTop: theme.spacing.xs,
   },
+  logoutHint: {
+    marginBottom: theme.spacing.sm,
+  },
   logoutButton: {
-    borderColor: theme.colors.error,
+    marginTop: theme.spacing.xs,
+  },
+  headerLogout: {
+    marginRight: theme.spacing.md,
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
   },
 });

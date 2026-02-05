@@ -3,6 +3,8 @@ export const radius = {
   md: 8,
   lg: 12,
   xl: 16,
+  /** 18dp card radius for premium look */
+  card: 18,
   full: 9999,
 } as const;
 

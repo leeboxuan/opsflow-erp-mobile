@@ -11,3 +11,6 @@ export * from './stops';
 export * from './driver';
 export * from './driverMvp';
 export * from './admin';
+export * from './places';
+export * from './inventory';
+export * from './transport';

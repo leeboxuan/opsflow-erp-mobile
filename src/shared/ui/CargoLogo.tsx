@@ -141,7 +141,7 @@ export default function CargoLogo() {
       {/* Text */}
       <View style={styles.textContainer}>
         <AppText variant="h1" weight="bold" color="primary">
-          Cargo ERP
+          OPSflow
         </AppText>
         <AppText variant="bodySmall" color="textSecondary" style={styles.subtitle}>
           Transport Management

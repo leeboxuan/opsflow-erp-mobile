@@ -1,6 +1,6 @@
 /**
  * DriverTabs - Bottom Tab Navigator for Driver interface
- * Contains: Home, Trips, Profile tabs
+ * Contains: Today (default), Home, Trips, Settings
  * Trips tab contains a stack navigator for detail screens
  */
 import React from 'react';
@@ -10,45 +10,41 @@ import { Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Screens - importing from features (existing) and screens (new)
+import DriverTodayScreen from '../../screens/driver/DriverTodayScreen';
 import DriverHomeScreen from '../../screens/driver/DriverHomeScreen';
 import DriverTripsScreen from '../../features/driver/DriverTripsScreen';
 import TripExecutionScreen from '../../screens/driver/TripExecutionScreen';
 import DriverTripDetailScreen from '../../features/driver/DriverTripDetailScreen';
 import PODCaptureScreen from '../../screens/driver/PODCaptureScreen';
-import DriverMapScreen from '../../screens/driver/DriverMapScreen';
 import SettingsScreen from '../../features/settings/SettingsScreen';
 
 // Define param lists
 export type DriverTabsParamList = {
+  TodayTab: undefined;
   HomeTab: undefined;
   TripsTab: {
-    screen: 'MyTrips' | 'TripExecution' | 'DriverTripDetail' | 'PODCapture' | 'DriverMap';
+    screen: 'MyTrips' | 'TripExecution' | 'DriverTripDetail' | 'PODCapture';
     params?: {
       tripId?: string;
       stopId?: string;
     };
   };
-  MapTab: undefined;
-  ProfileTab: undefined;
-  DriverHome: undefined;
+  Settings: undefined;
   MyTrips: undefined;
   TripExecution: { tripId: string };
   PODCapture: { stopId: string };
-  DriverMap: undefined;
-  Settings: undefined;
 };
 
-/** Param list for the Trips tab stack (MyTrips, TripExecution, DriverTripDetail, PODCapture, DriverMap) */
+/** Param list for the Trips tab stack (MyTrips, TripExecution, DriverTripDetail, PODCapture) */
 export type DriverTripsStackParamList = {
   MyTrips: undefined;
   TripExecution: { tripId: string };
   DriverTripDetail: { tripId: string };
   PODCapture: { stopId: string };
-  DriverMap: undefined;
 };
 
-const Tab = createBottomTabNavigator();
-const TripsStack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator<DriverTabsParamList>();
+const TripsStack = createNativeStackNavigator<DriverTripsStackParamList>();
 
 // Trips Tab Stack
 function TripsStackNavigator() {
@@ -74,11 +70,6 @@ function TripsStackNavigator() {
         component={PODCaptureScreen}
         options={{ title: 'Upload POD' }}
       />
-      <TripsStack.Screen
-        name="DriverMap"
-        component={DriverMapScreen}
-        options={{ title: 'Map' }}
-      />
     </TripsStack.Navigator>
   );
 }
@@ -92,6 +83,7 @@ export default function DriverTabs() {
 
   return (
     <Tab.Navigator
+      initialRouteName="TodayTab"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#2196f3',
@@ -101,6 +93,14 @@ export default function DriverTabs() {
           height: TAB_BAR_BASE_HEIGHT + bottomInset,
         },
       }}>
+      <Tab.Screen
+        name="TodayTab"
+        component={DriverTodayScreen}
+        options={{
+          tabBarLabel: 'Today',
+          tabBarIcon: () => <Text>📋</Text>,
+        }}
+      />
       <Tab.Screen
         name="HomeTab"
         component={DriverHomeScreen}
@@ -118,19 +118,16 @@ export default function DriverTabs() {
         }}
       />
       <Tab.Screen
-        name="MapTab"
-        component={DriverMapScreen}
-        options={{
-          tabBarLabel: 'Map',
-          tabBarIcon: () => <Text>🗺️</Text>,
-        }}
-      />
-      <Tab.Screen
-        name="ProfileTab"
+        name="Settings"
         component={SettingsScreen}
         options={{
-          tabBarLabel: 'Profile',
-          tabBarIcon: () => <Text>👤</Text>,
+          tabBarLabel: 'Settings',
+          tabBarIcon: () => <Text>⚙️</Text>,
+          headerShown: true,
+          headerTitle: 'Settings',
+          headerStyle: { backgroundColor: '#2196f3' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
         }}
       />
     </Tab.Navigator>

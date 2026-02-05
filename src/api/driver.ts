@@ -1,5 +1,4 @@
 import { apiClient, getErrorMessage } from './client';
-import { LocationData } from '../location/LocationTracker';
 import { Trip } from './types';
 
 /**
@@ -18,18 +17,9 @@ export interface UpdateLocationRequest {
 /**
  * Update driver location (authenticated, requires x-tenant-id header)
  */
-export async function updateLocation(location: LocationData): Promise<void> {
+export async function updateLocation(location: UpdateLocationRequest): Promise<void> {
   try {
-    const payload: UpdateLocationRequest = {
-      lat: location.lat,
-      lng: location.lng,
-      accuracy: location.accuracy,
-      heading: location.heading,
-      speed: location.speed,
-      capturedAt: location.capturedAt,
-    };
-
-    await apiClient.post('/driver/location', payload);
+    await apiClient.post('/driver/location', location);
   } catch (error) {
     throw new Error(getErrorMessage(error));
   }
@@ -46,14 +36,26 @@ function formatDateForApi(date: Date): string {
  */
 export async function getTrips(date: Date): Promise<Trip[]> {
   try {
-    const response = await apiClient.get<Trip[]>('/driver/trips', {
+    const response = await apiClient.get("/driver/trips", {
       params: { date: formatDateForApi(date) },
     });
-    return response.data ?? [];
+
+    const data: any = response.data;
+
+    // support common shapes: Trip[], { trips: Trip[] }, { data: Trip[] }, { items: Trip[] }
+    const trips =
+      Array.isArray(data) ? data :
+      Array.isArray(data?.trips) ? data.trips :
+      Array.isArray(data?.data) ? data.data :
+      Array.isArray(data?.items) ? data.items :
+      [];
+
+    return trips;
   } catch (error) {
     throw new Error(getErrorMessage(error));
   }
 }
+
 
 /**
  * Get a single trip by ID (driver context)

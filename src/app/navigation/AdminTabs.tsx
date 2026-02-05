@@ -4,7 +4,7 @@
  * Each tab contains a stack navigator for detail screens
  */
 import React from 'react';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +21,7 @@ import DriversListScreen from '../../screens/admin/DriversListScreen';
 import DriverDetailScreen from '../../screens/admin/DriverDetailScreen';
 import VehiclesListScreen from '../../screens/admin/VehiclesListScreen';
 import VehicleDetailScreen from '../../screens/admin/VehicleDetailScreen';
-import AdminLiveMapScreen from '../../screens/admin/AdminLiveMapScreen';
+import SettingsScreen from '../../features/settings/SettingsScreen';
 
 // Define param lists
 export type AdminTabsParamList = {
@@ -46,7 +46,7 @@ export type AdminTabsParamList = {
       vehicleId?: string;
     };
   };
-  AdminLiveMap: undefined;
+  SettingsTab: undefined;
   // Detail screens accessible from any tab
   AdminHome: undefined;
   OrdersList: undefined;
@@ -61,12 +61,12 @@ export type AdminTabsParamList = {
   VehicleDetail: { vehicleId: string };
 };
 
-type OrdersStackParamList = {
+export type OrdersStackParamList = {
   OrdersList: undefined;
   CreateOrder: undefined;
   OrderDetail: { orderId: string };
 };
-type TripsStackParamList = {
+export type TripsStackParamList = {
   TripsList: undefined;
   TripDetail: { tripId: string };
   StopDetail: { stopId: string; tripId: string };
@@ -88,7 +88,12 @@ function HomeTabIcon() { return <Text>🏠</Text>; }
 function OrdersTabIcon() { return <Text>📦</Text>; }
 function TripsTabIcon() { return <Text>🚛</Text>; }
 function ResourcesTabIcon() { return <Text>👥</Text>; }
-function LiveMapTabIcon() { return <Text>🗺️</Text>; }
+function SettingsTabIcon() { return <Text>⚙️</Text>; }
+
+/** Wrapper so SettingsScreen (typed for stack) can be used as a tab screen. */
+function SettingsTabScreen({ navigation, route }: BottomTabScreenProps<AdminTabsParamList, 'SettingsTab'>) {
+  return <SettingsScreen navigation={navigation as never} route={route as never} />;
+}
 
 // Orders Tab Stack
 function OrdersStackNavigator() {
@@ -217,11 +222,16 @@ export default function AdminTabs() {
         }}
       />
       <Tab.Screen
-        name="AdminLiveMap"
-        component={AdminLiveMapScreen}
+        name="SettingsTab"
+        component={SettingsTabScreen}
         options={{
-          tabBarLabel: 'Live Map',
-          tabBarIcon: LiveMapTabIcon,
+          tabBarLabel: 'Settings',
+          tabBarIcon: SettingsTabIcon,
+          headerShown: true,
+          headerTitle: 'Settings',
+          headerStyle: { backgroundColor: '#6200ee' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
         }}
       />
     </Tab.Navigator>

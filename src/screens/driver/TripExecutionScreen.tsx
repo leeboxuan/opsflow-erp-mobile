@@ -1,5 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Linking, Alert, TextInput } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Linking,
+  Alert,
+  TextInput,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+} from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DriverTripsStackParamList } from '../../app/navigation/DriverTabs';
@@ -11,7 +24,7 @@ import {
   completeStop,
   type AcceptTripPayload,
 } from '../../api/driver';
-import { getLocationTracker } from '../../location/LocationTracker';
+import { startBackgroundTracking, stopBackgroundTracking } from '../../location/locationService';
 import Screen from '../../shared/ui/Screen';
 import Card from '../../shared/ui/Card';
 import AppText from '../../shared/ui/AppText';
@@ -19,6 +32,7 @@ import Badge from '../../shared/ui/Badge';
 import Button from '../../shared/ui/Button';
 import { theme } from '../../shared/theme/theme';
 import { getToken } from '../../shared/utils/authStorage';
+import { useAuthRole } from '../../shared/hooks/useAuthRole';
 import { Trip, Stop } from '../../api/types';
 
 type Props = NativeStackScreenProps<DriverTripsStackParamList, 'TripExecution'>;
@@ -54,37 +68,38 @@ function getNextStop(stops: Stop[]): Stop | null {
   return sorted.find((s) => s.status !== 'Completed' && s.status !== 'Failed') ?? null;
 }
 
+/**
+ * Normalize trip status for reliable matching (lowercase + remove spaces).
+ * Handles variations like "In Transit", "InTransit", "intransit", etc.
+ */
+function normalizeTripStatus(status: string | undefined | null): string {
+  if (!status) return '';
+  return status.toLowerCase().replace(/\s+/g, '');
+}
+
 export default function TripExecutionScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
+  const { isDriverExecution } = useAuthRole();
   const queryClient = useQueryClient();
   const [processingStop, setProcessingStop] = useState<string | null>(null);
   const [processingTrip, setProcessingTrip] = useState(false);
-  const [lastLocation, setLastLocation] = useState<{ lat: number; lng: number; timeAgo: number } | null>(null);
   const [acceptVehicleId, setAcceptVehicleId] = useState('');
   const [acceptTrailerNo, setAcceptTrailerNo] = useState('');
+  const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [mapLocationPermissionDenied, setMapLocationPermissionDenied] = useState(false);
+  const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const mapRef = useRef<MapView | null>(null);
+  const prevNextStopIdRef = useRef<string | null>(null);
+  const [stopReassignedModalVisible, setStopReassignedModalVisible] = useState(false);
+  const isFocused = useIsFocused();
 
-  const tracker = getLocationTracker({
-    onLocationUpdate: (location) => {
-      setLastLocation({ lat: location.lat, lng: location.lng, timeAgo: 0 });
-    },
-  });
-
-  useEffect(() => {
-    if (!tracker.isCurrentlyTracking()) {
-      tracker.startTracking().catch((e) => console.error('Failed to start location tracking:', e));
-    }
-    const interval = setInterval(() => {
-      const loc = tracker.getLastSentLocation();
-      if (loc) {
-        setLastLocation({
-          lat: loc.lat,
-          lng: loc.lng,
-          timeAgo: tracker.getTimeSinceLastUpdate(),
-        });
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  /** Singapore fallback when driverLocation is null */
+  const SINGAPORE_REGION = {
+    latitude: 1.3521,
+    longitude: 103.8198,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
+  };
 
   const hasToken = Boolean(getToken());
   const {
@@ -96,7 +111,27 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
     queryKey: ['driverTrip', tripId],
     queryFn: () => getTrip(tripId),
     enabled: hasToken && !!tripId,
+    refetchInterval: isFocused ? 45000 : false,
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      if (hasToken && tripId) refetch();
+    }, [hasToken, tripId, refetch])
+  );
+
+  // If the current (next) stop was reassigned away from this trip, show modal and offer to go back to Trip Details
+  useEffect(() => {
+    if (!trip?.stops) return;
+    const stops = trip.stops;
+    const nextStop = getNextStop(stops);
+    const nextStopId = nextStop?.id ?? null;
+    const prevId = prevNextStopIdRef.current;
+    if (prevId != null && !stops.some((s) => s.id === prevId)) {
+      setStopReassignedModalVisible(true);
+    }
+    prevNextStopIdRef.current = nextStopId;
+  }, [trip?.stops]);
 
   const acceptMutation = useMutation({
     mutationFn: (payload: AcceptTripPayload) => acceptTrip(tripId, payload),
@@ -111,8 +146,83 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['driverTrip', tripId] });
       queryClient.invalidateQueries({ queryKey: ['driverTrips'] });
+      startBackgroundTracking().catch((e) => console.error('Failed to start background tracking:', e));
     },
   });
+
+  // Start/stop background tracking based on trip status only (not on mount unless trip is active)
+  // Tracking is automatic and mandatory during active trips (like Grab/Lalamove)
+  useEffect(() => {
+    if (!trip?.status) return;
+    const normalized = normalizeTripStatus(trip.status);
+    const active = normalized === 'dispatched' || normalized === 'intransit';
+    const ended = normalized === 'completed' || normalized === 'cancelled' || normalized === 'closed' || normalized === 'delivered';
+    if (active) {
+      startBackgroundTracking().catch((e) => console.error('Failed to start background tracking:', e));
+    } else if (ended) {
+      stopBackgroundTracking().catch((e) => console.warn('stopBackgroundTracking:', e));
+    }
+  }, [trip?.status]);
+
+  // Foreground location watch for map display (only when trip is active)
+  useEffect(() => {
+    if (!trip?.status) return;
+    const normalized = normalizeTripStatus(trip.status);
+    const active = normalized === 'dispatched' || normalized === 'intransit';
+
+    if (!active) {
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
+      setDriverLocation(null);
+      setMapLocationPermissionDenied(false);
+      return;
+    }
+
+    let cancelled = false;
+    setMapLocationPermissionDenied(false);
+
+    const startWatch = async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (cancelled) return;
+      if (status !== 'granted') {
+        setMapLocationPermissionDenied(true);
+        return;
+      }
+
+      const sub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.LocationAccuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        (loc) => {
+          if (cancelled) return;
+          const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          setDriverLocation(coords);
+          // Animate map to new region instead of controlled region to avoid snapping
+          mapRef.current?.animateToRegion({
+            latitude: coords.lat,
+            longitude: coords.lng,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }, 500);
+        }
+      );
+      if (cancelled) {
+        sub.remove();
+        return;
+      }
+      subscriptionRef.current = sub;
+    };
+
+    startWatch();
+
+    return () => {
+      cancelled = true;
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
+    };
+  }, [trip?.status]);
 
   const handleAcceptTrip = () => {
     const vehicleId = acceptVehicleId.trim();
@@ -178,6 +288,15 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
     }
   };
 
+  const handleOpenMapSettings = () => {
+    Linking.openSettings();
+  };
+
+  const handleStopReassignedDismiss = useCallback(() => {
+    setStopReassignedModalVisible(false);
+    navigation.navigate('DriverTripDetail', { tripId });
+  }, [navigation, tripId]);
+
   if (isLoading) {
     return (
       <Screen>
@@ -209,6 +328,19 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
     trip.status !== 'Completed' &&
     trip.status !== 'Cancelled' &&
     (accepted || trip.status !== 'Scheduled');
+  
+  // Show map only when trip is active (Dispatched or In Transit)
+  const normalizedStatus = normalizeTripStatus(trip.status);
+  const isTripActive = normalizedStatus === 'dispatched' || normalizedStatus === 'intransit';
+
+  const initialMapRegion = driverLocation
+    ? {
+        latitude: driverLocation.lat,
+        longitude: driverLocation.lng,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }
+    : SINGAPORE_REGION;
 
   return (
     <Screen scrollable>
@@ -226,13 +358,6 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
           <AppText variant="body" color="textSecondary" style={styles.route}>
             {getOrigin(trip)} → {getDestination(trip)}
           </AppText>
-          {lastLocation && (
-            <View style={styles.locationStatus}>
-              <AppText variant="bodySmall" color="textSecondary">
-                Live: {lastLocation.lat.toFixed(6)}, {lastLocation.lng.toFixed(6)} · {lastLocation.timeAgo}s ago
-              </AppText>
-            </View>
-          )}
         </Card>
 
         {isScheduled && (
@@ -278,6 +403,55 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
               loading={processingTrip || startTripMutation.isPending}
               style={styles.actionButton}
             />
+          </Card>
+        )}
+
+        {/* Map - only shown when trip is active */}
+        {isTripActive && (
+          <Card style={styles.mapCard}>
+            <AppText variant="h3" weight="bold" color="text" style={styles.sectionTitle}>
+              Live Location
+            </AppText>
+            <View style={styles.mapContainer}>
+              {mapLocationPermissionDenied ? (
+                <View style={styles.mapPlaceholder}>
+                  <AppText variant="body" color="textSecondary" style={styles.mapPlaceholderText}>
+                    Location permission is required to show your position on the map.
+                  </AppText>
+                  <Button
+                    title="Open Settings"
+                    onPress={handleOpenMapSettings}
+                    variant="outline"
+                    style={styles.mapSettingsButton}
+                  />
+                </View>
+              ) : driverLocation ? (
+                <MapView
+                  ref={mapRef}
+                  provider={PROVIDER_GOOGLE}
+                  style={styles.map}
+                  initialRegion={initialMapRegion}
+                  showsUserLocation={true}
+                  showsMyLocationButton={true}
+                  followsUserLocation={false}>
+                  <Marker
+                    coordinate={{
+                      latitude: driverLocation.lat,
+                      longitude: driverLocation.lng,
+                    }}
+                    title="My Location"
+                    pinColor={theme.colors.primary}
+                  />
+                </MapView>
+              ) : (
+                <View style={styles.mapPlaceholder}>
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <AppText variant="body" color="textSecondary" style={styles.mapPlaceholderText}>
+                    Getting location...
+                  </AppText>
+                </View>
+              )}
+            </View>
           </Card>
         )}
 
@@ -337,7 +511,8 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
                       variant="outline"
                       style={styles.actionButton}
                     />
-                    {!isCompleted && (
+                    {/* Driver only: Start stop, Mark Delivered, Complete. Admin/Ops never see these. */}
+                    {isDriverExecution && !isCompleted && (
                       <>
                         {canStartThisStop && (
                           <Button
@@ -349,9 +524,9 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
                         )}
                         {isStarted && !isCompleted && (
                           <>
-                            { (stop.type === 'DELIVERY' || stop.type === 'Delivery') ? (
+                            {(stop.type === 'DELIVERY' || stop.type === 'Delivery') ? (
                               <Button
-                                title="Complete with POD"
+                                title="Mark Delivered"
                                 onPress={() => handleCompleteWithPOD(stop.id, stop.type)}
                                 loading={processingStop === stop.id}
                                 style={styles.actionButton}
@@ -375,6 +550,20 @@ export default function TripExecutionScreen({ route, navigation }: Props) {
           )}
         </Card>
       </ScrollView>
+
+      <Modal visible={stopReassignedModalVisible} transparent animationType="fade">
+        <Pressable style={styles.modalBackdrop} onPress={handleStopReassignedDismiss}>
+          <Pressable style={styles.stopReassignedModal} onPress={(e) => e.stopPropagation()}>
+            <AppText variant="h3" weight="bold" color="text" style={styles.stopReassignedTitle}>
+              This stop was reassigned
+            </AppText>
+            <AppText variant="body" color="textSecondary" style={styles.stopReassignedMessage}>
+              The stop is no longer part of this trip. You will be taken back to Trip Details.
+            </AppText>
+            <Button title="OK" onPress={handleStopReassignedDismiss} style={styles.stopReassignedButton} />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }
@@ -394,12 +583,6 @@ const styles = StyleSheet.create({
   },
   route: {
     marginTop: theme.spacing.xs,
-  },
-  locationStatus: {
-    marginTop: theme.spacing.sm,
-    padding: theme.spacing.sm,
-    backgroundColor: theme.colors.successLight,
-    borderRadius: theme.radius.sm,
   },
   acceptCard: {
     marginBottom: theme.spacing.md,
@@ -481,5 +664,54 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     marginTop: theme.spacing.md,
+  },
+  mapCard: {
+    marginBottom: theme.spacing.md,
+  },
+  mapContainer: {
+    height: 300,
+    borderRadius: theme.radius.md,
+    overflow: 'hidden',
+    marginTop: theme.spacing.sm,
+  },
+  map: {
+    flex: 1,
+  },
+  mapPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.gray50,
+  },
+  mapPlaceholderText: {
+    marginTop: theme.spacing.sm,
+    textAlign: 'center',
+    paddingHorizontal: theme.spacing.md,
+  },
+  mapSettingsButton: {
+    marginTop: theme.spacing.md,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: theme.spacing.lg,
+  },
+  stopReassignedModal: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.lg,
+    width: '100%',
+    maxWidth: 360,
+  },
+  stopReassignedTitle: {
+    marginBottom: theme.spacing.sm,
+  },
+  stopReassignedMessage: {
+    marginBottom: theme.spacing.lg,
+  },
+  stopReassignedButton: {
+    marginTop: theme.spacing.xs,
   },
 });

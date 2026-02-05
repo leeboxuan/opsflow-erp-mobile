@@ -6,14 +6,22 @@ import Card from '../../shared/ui/Card';
 import AppText from '../../shared/ui/AppText';
 import Button from '../../shared/ui/Button';
 import Badge from '../../shared/ui/Badge';
+import ModeBadge from '../../shared/ui/ModeBadge';
 import { theme } from '../../shared/theme/theme';
 import { AdminTabsParamList } from '../../app/navigation/AdminTabs';
+import { useAuthRole } from '../../shared/hooks/useAuthRole';
 
 type Props = BottomTabScreenProps<AdminTabsParamList, 'HomeTab'>;
 
 export default function AdminHomeScreen({ navigation }: Props) {
+  const { canEditRoute } = useAuthRole();
+
   const handleNavigateToOrders = () => {
     navigation.navigate('OrdersTab', { screen: 'OrdersList' });
+  };
+
+  const handleNavigateToCreateOrder = () => {
+    navigation.navigate('OrdersTab', { screen: 'CreateOrder' });
   };
 
   const handleNavigateToTrips = () => {
@@ -31,7 +39,10 @@ export default function AdminHomeScreen({ navigation }: Props) {
           <AppText variant="h1" weight="bold" color="text" style={styles.title}>
             OpsFlow
           </AppText>
-          <Badge label="ADMIN MODE" variant="info" />
+          <View style={styles.badges}>
+            <Badge label="ADMIN MODE" variant="info" />
+            <ModeBadge />
+          </View>
         </Card>
 
         <Card style={styles.statsCard}>
@@ -62,11 +73,13 @@ export default function AdminHomeScreen({ navigation }: Props) {
           <AppText variant="h3" weight="bold" color="text" style={styles.sectionTitle}>
             Quick Actions
           </AppText>
-          <Button
-            title="Create Order"
-            onPress={handleNavigateToOrders}
-            style={styles.actionButton}
-          />
+          {canEditRoute && (
+            <Button
+              title="Create Order"
+              onPress={handleNavigateToCreateOrder}
+              style={styles.actionButton}
+            />
+          )}
           <Button
             title="View All Orders"
             onPress={handleNavigateToOrders}
@@ -100,6 +113,12 @@ export default function AdminHomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     padding: theme.spacing.md,
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
   },
   headerCard: {
     marginBottom: theme.spacing.md,

@@ -3,6 +3,7 @@ import { View, StyleSheet, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../app/navigation/RootStackNavigator';
 import Screen from '../../shared/ui/Screen';
+import AppText from '../../shared/ui/AppText';
 import CargoLogo from '../../shared/ui/CargoLogo';
 import Input from '../../shared/ui/Input';
 import Button from '../../shared/ui/Button';
@@ -47,18 +48,21 @@ export default function LoginScreen({ navigation }: Props) {
       });
 
       // Update AuthContext state immediately with user and tenantId from login response
-      // This ensures headers are ready before /auth/me is called
       if (loginResult.user) {
         setUser(loginResult.user);
-        
-        // Set tenantId in context if available from login response
-        const tenantId = loginResult.user.tenantId || getCurrentTenantId();
+        // Ensure tenant is in context from any possible field (auth.ts already set storage; sync context)
+        const u = loginResult.user as any;
+        const tenantId =
+          getCurrentTenantId() ||
+          u?.tenantId ||
+          u?.tenant_id ||
+          u?.currentTenantId ||
+          (Array.isArray(u?.tenants) && u.tenants[0] ? u.tenants[0].tenantId || u.tenants[0].tenant_id : null);
         if (tenantId) {
           setCurrentTenantId(tenantId);
         }
       }
 
-      // Now refresh user (calls /auth/me with headers already set)
       await refreshUser();
 
       // Navigation will be handled by RootStackNavigator based on auth state
@@ -118,12 +122,29 @@ export default function LoginScreen({ navigation }: Props) {
           disabled={loading}
           style={styles.button}
         />
-        <Button
-          title="Network Diagnostics"
-          onPress={() => navigation.navigate('NetworkDiagnostics')}
-          variant="outline"
-          style={styles.debugButton}
-        />
+
+        {/* Dev: diagnostics (screens/tools) vs dev-only actions */}
+        <View style={styles.devSection}>
+          <View style={styles.devSubsection}>
+            <AppText variant="label" color="textSecondary" style={styles.devSectionTitle}>
+              Dev diagnostics
+            </AppText>
+            <Button
+              title="Network Diagnostics"
+              onPress={() => navigation.navigate('NetworkDiagnostics')}
+              variant="outline"
+              style={styles.devButton}
+            />
+          </View>
+          <View style={styles.devSubsection}>
+            <AppText variant="label" color="textSecondary" style={styles.devSectionTitle}>
+              Dev only
+            </AppText>
+            <AppText variant="bodySmall" color="textSecondary" style={styles.devHint}>
+              Dev-only actions (e.g. mock, reset) go here
+            </AppText>
+          </View>
+        </View>
       </Card>
     </Screen>
   );
@@ -144,7 +165,23 @@ const styles = StyleSheet.create({
   button: {
     marginTop: theme.spacing.sm,
   },
-  debugButton: {
-    marginTop: theme.spacing.sm,
+  devSection: {
+    marginTop: theme.spacing.lg,
+    paddingTop: theme.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  devSubsection: {
+    marginBottom: theme.spacing.md,
+  },
+  devSectionTitle: {
+    marginBottom: theme.spacing.xs,
+  },
+  devButton: {
+    marginTop: theme.spacing.xs,
+  },
+  devHint: {
+    marginTop: theme.spacing.xs,
+    fontStyle: 'italic',
   },
 });

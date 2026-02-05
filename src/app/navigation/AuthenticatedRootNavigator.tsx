@@ -13,11 +13,29 @@ export function setSelectedModeGlobal(mode: SelectedMode) {
   modeChangeListeners.forEach(listener => listener(mode));
 }
 
+/** Derive role from tenant membership when tenantRole not on user. */
+function getEffectiveRole(user: { tenantRole?: string; role?: string; tenants?: Array<{ tenantId: string; role?: string }> } | null, currentTenantId: string | null): string {
+  if (!user) return '';
+  if (user.tenantRole) return String(user.tenantRole).trim();
+  const tenants = user.tenants;
+  if (currentTenantId && Array.isArray(tenants)) {
+    const m = tenants.find((t) => t.tenantId === currentTenantId);
+    if (m?.role) return String(m.role).trim();
+  }
+  if (Array.isArray(tenants) && tenants.length > 0 && tenants[0].role) return String(tenants[0].role).trim();
+  return String(user.role ?? '').trim();
+}
+
 export default function AuthenticatedRootNavigator() {
-  const { user } = useAuth();
+  const { user, currentTenantId } = useAuth();
   const [selectedMode, setSelectedModeState] = useState<SelectedMode>('admin');
   const [initialized, setInitialized] = useState(false);
   const listenerRef = useRef<((mode: SelectedMode) => void) | null>(null);
+
+  // Prefer tenant role (from membership); derive from user.tenants + currentTenantId if not set
+  const roleKey = getEffectiveRole(user, currentTenantId);
+  const isDriverRole = roleKey.toLowerCase() === 'driver';
+  const isAdminLikeRole = ['admin', 'ops', 'finance'].includes(roleKey.toLowerCase());
 
   // Load selected mode preference on mount with validation
   useEffect(() => {
@@ -33,18 +51,21 @@ export default function AuthenticatedRootNavigator() {
         Alert.alert('Mode Reset', 'Role reset to Admin mode.', [{ text: 'OK' }]);
       }
       
-      // Safety: If user is actually a Driver role, force admin mode (they can't switch)
-      // Actually wait - if user.role is Driver, they should see DriverStack
-      // But if they're Admin/Ops/Finance and somehow have invalid mode, reset to admin
-      if (['Admin', 'Ops', 'Finance'].includes(user.role) && savedMode !== 'admin' && savedMode !== 'driver') {
+      // Driver role: always use driver mode (they can't switch to admin stack)
+      // Admin/Ops/Finance: respect saved mode; if invalid, reset to admin
+      if (isDriverRole) {
+        setSelectedMode('driver');
+        setSelectedModeState('driver');
+      } else if (isAdminLikeRole && savedMode !== 'admin' && savedMode !== 'driver') {
         savedMode = 'admin';
         setSelectedMode('admin');
+        setSelectedModeState('admin');
+      } else {
+        setSelectedModeState(savedMode);
       }
-
-      setSelectedModeState(savedMode);
       setInitialized(true);
     }
-  }, [user]);
+  }, [user, isDriverRole, isAdminLikeRole]);
 
   // Listen for mode changes from Settings screen
   useEffect(() => {
@@ -62,20 +83,21 @@ export default function AuthenticatedRootNavigator() {
     };
   }, []);
 
-  // Determine which stack to show
+  // Determine which stack to show (differentiate by role: Driver vs Admin/others)
   const shouldShowDriverStack = (): boolean => {
     if (!user) return false;
 
-    // If user is actually a Driver role, always show DriverStack
-    if (user.role === 'Driver') {
+    // API role "Driver" (any case) → always DriverStack
+    if (isDriverRole) {
       return true;
     }
 
-    // If user is Admin/Ops/Finance, check selected mode (default to 'admin')
-    if (['Admin', 'Ops', 'Finance'].includes(user.role)) {
+    // Admin / Ops / Finance / USER etc. → AdminStack, or DriverStack only if they chose "driver mode"
+    if (isAdminLikeRole) {
       return selectedMode === 'driver';
     }
 
+    // Unknown role (e.g. "USER"): default to Admin stack
     return false;
   };
 
@@ -84,8 +106,7 @@ export default function AuthenticatedRootNavigator() {
   }
 
   const showDriver = shouldShowDriverStack();
-  // Use key to force re-render when mode changes
-  const stackKey = `${user.role}-${selectedMode}-${user.tenantId ?? ''}`;
+  const stackKey = `${(user as any)?.tenantRole ?? user.role}-${selectedMode}-${(user as any)?.currentTenantId ?? user.tenantId ?? ''}`;
 
   // Force re-render by using key prop
   return showDriver ? (

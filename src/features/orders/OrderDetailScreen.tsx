@@ -1,5 +1,6 @@
-import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { StyleSheet, View, TouchableOpacity } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useQuery } from '@tanstack/react-query';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AdminStackParamList } from '../../app/navigation/AdminStack';
@@ -14,6 +15,14 @@ type Props = NativeStackScreenProps<AdminStackParamList, 'OrderDetail'>;
 
 export default function OrderDetailScreen({ route }: Props) {
   const { orderId } = route.params;
+  const [copyToast, setCopyToast] = useState(false);
+  const handleCopyOrderRef = useCallback(async (text: string) => {
+    try {
+      await Clipboard.setStringAsync(text);
+      setCopyToast(true);
+      setTimeout(() => setCopyToast(false), 1500);
+    } catch {}
+  }, []);
 
   const {
     data: order,
@@ -60,14 +69,34 @@ export default function OrderDetailScreen({ route }: Props) {
     );
   }
 
+  const orderRef = order.orderNumber || `#${order.id.slice(0, 8)}`;
+
   return (
     <Screen scrollable>
-      {/* Order Info */}
+      {/* Order Ref (immutable, prominent, with Copy) */}
       <Card style={styles.section}>
-        <View style={styles.header}>
-          <AppText variant="h1" weight="bold" color="text">
-            {order.orderNumber || `Order #${order.id.slice(0, 8)}`}
+        <View style={styles.orderRefRow}>
+          <View style={styles.orderRefBlock}>
+            <AppText variant="caption" color="textSecondary" style={styles.orderRefLabel}>
+              Order Ref
+            </AppText>
+            <AppText variant="h1" weight="bold" color="text">
+              {orderRef}
+            </AppText>
+          </View>
+          <TouchableOpacity
+            style={styles.copyBtn}
+            onPress={() => handleCopyOrderRef(orderRef)}
+            accessibilityLabel="Copy order ref">
+            <AppText variant="body" weight="semibold" color="primary">Copy</AppText>
+          </TouchableOpacity>
+        </View>
+        {copyToast && (
+          <AppText variant="caption" color="primary" style={styles.copiedHint}>
+            Copied to clipboard
           </AppText>
+        )}
+        <View style={styles.header}>
           {order.status && (
             <Badge label={order.status} variant="info" />
           )}
@@ -140,9 +169,28 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: theme.spacing.md,
   },
+  orderRefRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: theme.spacing.sm,
+  },
+  orderRefBlock: {
+    flex: 1,
+  },
+  orderRefLabel: {
+    marginBottom: theme.spacing.xs,
+  },
+  copyBtn: {
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.md,
+  },
+  copiedHint: {
+    marginBottom: theme.spacing.sm,
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     alignItems: 'center',
     marginBottom: theme.spacing.md,
   },

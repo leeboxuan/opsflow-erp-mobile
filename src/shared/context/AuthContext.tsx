@@ -2,16 +2,89 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User, TenantMembership } from '../../api/types';
 import { getCurrentUser } from '../../api/auth';
 import { getUser, storeUser } from '../utils/authStorage';
-import { getToken, getCurrentTenantId, setCurrentTenantId } from '../utils/authStorage';
+import { getToken, getCurrentTenantId, setCurrentTenantId, clearCurrentTenantId } from '../utils/authStorage';
+
+// ---------------------------------------------------------------------------
+// Auth + tenant: profile (profiles table), memberships (tenant_memberships + tenants)
+// ---------------------------------------------------------------------------
+// - On sign-in / app start we fetch profile + memberships (via /auth/me).
+// - isSuperAdmin = profile.global_role === 'SUPERADMIN'. SuperAdmin can proceed without
+//   selectedTenantId (global mode). refreshUser does not throw when isSuperAdmin and
+//   selectedTenantId is null.
+// - Non-superadmin: 1 membership → auto-select; >1 → show TenantSelect; 0 → show NoAccess.
+// - selectedTenantId is string | null only (never 0). Persisted in existing storage.
+// ---------------------------------------------------------------------------
+
+/** isSuperAdmin from profile.global_role (profiles table) or fallback to role. */
+export function isSuperAdminFromUser(
+  u: { role?: string } | null
+): boolean {
+  if (!u?.role) return false;
+  return String(u.role).trim().toUpperCase() === "SUPERADMIN";
+}
+
+
+/** Memberships = user.tenants or user.tenantMemberships (from API). */
+function getMemberships(u: any): TenantMembership[] {
+  // API returns tenantMemberships array
+  if (Array.isArray(u?.tenantMemberships)) {
+    return u.tenantMemberships.map((m: any) => ({
+      tenantId: m.tenantId,
+      tenantName: m.tenant?.name ?? m.tenantName,
+      tenant: m.tenant?.name ?? m.tenant,
+      role: m.role,
+      isActive: m.status === 'Active' || m.isActive !== false,
+    }));
+  }
+  // Fallback to tenants (if already normalized)
+  return Array.isArray(u?.tenants) ? u.tenants : [];
+}
+
+function getFirstTenantId(u: any): string | null {
+  if (!u) return null;
+  if (u.tenantId) return u.tenantId;
+  if (u.currentTenantId) return u.currentTenantId;
+  // Check tenantMemberships first (API format)
+  if (Array.isArray(u.tenantMemberships) && u.tenantMemberships[0]) {
+    return u.tenantMemberships[0].tenantId ?? null;
+  }
+  // Fallback to tenants
+  if (Array.isArray(u.tenants) && u.tenants[0]) {
+    return u.tenants[0].tenantId ?? null;
+  }
+  return null;
+}
+
+/** Role for the selected tenant: from membership for currentTenantId, else first membership. */
+function getTenantRoleFromMemberships(
+  memberships: TenantMembership[],
+  tenantId: string | null
+): string | undefined {
+  if (!memberships.length) return undefined;
+  if (tenantId) {
+    const m = memberships.find((x) => x.tenantId === tenantId);
+    if (m?.role) return m.role;
+  }
+  return memberships[0]?.role;
+}
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  /** Selected tenant ID. string | null only (never 0). Null allowed for SuperAdmin. */
   currentTenantId: string | null;
   setUser: (user: User | null) => void;
   setCurrentTenantId: (tenantId: string | null) => void;
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
+  isSuperAdmin: boolean;
+  hasTenantContext: boolean;
+  /** Non-superadmin with >1 memberships and none selected → show TenantSelect. */
+  needsTenantSelection: boolean;
+  /** Non-superadmin with 0 memberships → show NoAccess. */
+  noAccess: boolean;
+  /** Display name for mode badge: "SuperAdmin" or selected tenant name. */
+  selectedTenantName: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -19,6 +92,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [currentTenantId, setCurrentTenantIdState] = useState<string | null>(null);
+  const [needsTenantSelection, setNeedsTenantSelection] = useState(false);
+  const [noAccess, setNoAccess] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const refreshUser = async () => {
@@ -27,156 +102,193 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!token) {
         setUser(null);
         setCurrentTenantIdState(null);
+        setNeedsTenantSelection(false);
+        setNoAccess(false);
         setLoading(false);
         return;
       }
 
-      // Ensure tenantId is set in storage before calling /auth/me (API requires X-Tenant-Id)
+      const storedUser = getUser() as (User & { profile?: { global_role?: string }; tenants?: TenantMembership[] }) | null;
       let storedTenantId = getCurrentTenantId();
-      if (!storedTenantId && user?.tenantId) {
-        setCurrentTenantId(user.tenantId);
-        storedTenantId = user.tenantId;
+
+      // Fetch profile + memberships. When no tenant is stored, request goes without X-Tenant-Id
+      // (backend may return profile + tenants for tenant-selection flow or SuperAdmin).
+      let userData: any = null;
+      try {
+        const raw = await getCurrentUser();
+        userData = raw.user ?? raw;
+      } catch (e) {
+        console.warn('Auth refresh: getCurrentUser failed', e);
+        userData = storedUser;
       }
-      // If still missing, restore from last stored user so /auth/me can succeed
-      if (!storedTenantId) {
-        const storedUser = getUser();
-        const fromUser =
-          storedUser?.tenantId ||
-          (storedUser as any)?.currentTenantId ||
-          (Array.isArray((storedUser as any)?.tenants) && (storedUser as any).tenants[0]
-            ? (storedUser as any).tenants[0].tenantId
-            : null);
-        if (fromUser) {
-          setCurrentTenantId(fromUser);
-          setCurrentTenantIdState(fromUser);
-          storedTenantId = fromUser;
-          console.log(`✅ Restored tenant ID from stored user: ${fromUser}`);
+
+      if (!userData) {
+        setUser(null);
+        setCurrentTenantIdState(null);
+        setNeedsTenantSelection(false);
+        setNoAccess(false);
+        setLoading(false);
+        return;
+      }
+
+      const memberships = getMemberships(userData);
+      const superadmin = isSuperAdminFromUser(userData);
+
+      console.log('🔍 Auth refresh:', {
+        hasTenantMemberships: Array.isArray(userData?.tenantMemberships),
+        tenantMembershipsCount: userData?.tenantMemberships?.length ?? 0,
+        membershipsCount: memberships.length,
+        role: userData?.role,
+        isSuperAdmin: superadmin,
+      });
+
+      // Normalize API response: map tenantMemberships to tenants format
+      const normalized = {
+        ...userData,
+        tenants: memberships.length > 0 ? memberships : (userData.tenants ?? []),
+      };
+
+      // ----- SuperAdmin: allow selectedTenantId = null (global mode) -----
+      if (superadmin) {
+        setNoAccess(false);
+        const superTenantId = storedTenantId || getFirstTenantId(normalized);
+        if (!storedTenantId) {
+          clearCurrentTenantId();
+          setCurrentTenantIdState(null);
+        } else {
+          setCurrentTenantIdState(storedTenantId);
         }
-      }
-      if (!storedTenantId) {
-        console.warn('⚠️ No tenant ID in storage or stored user; /auth/me may fail (X-Tenant-Id required)');
-      }
-
-      // Try to get user from API (headers are already set via interceptor)
-      const apiUser = await getCurrentUser();
-      const userData = apiUser.user || apiUser;
-
-      // Extract tenant ID from response
-      let extractedTenantId: string | null = null;
-
-      // If user has tenants array (multiple tenants)
-      if (userData.tenants && Array.isArray(userData.tenants) && userData.tenants.length > 0) {
-        // Find first active membership, or use first one
-        const activeTenant =
-          userData.tenants.find((t: TenantMembership) => t.isActive !== false) ||
-          userData.tenants[0];
-        extractedTenantId = activeTenant.tenantId;
-      } else if (userData.tenantId) {
-        // Single tenant ID
-        extractedTenantId = userData.tenantId;
-      } else if (userData.currentTenantId) {
-        // Current tenant ID field
-        extractedTenantId = userData.currentTenantId;
+        setNeedsTenantSelection(false);
+        // Derive tenantRole for superadmin (from selected tenant or first membership)
+        const tenantRole = getTenantRoleFromMemberships(memberships, superTenantId);
+        storeUser({
+          id: normalized.id,
+          username: normalized.username || normalized.email,
+          email: normalized.email,
+          role: normalized.role,
+          tenant: normalized.tenant,
+          tenantId: getFirstTenantId(normalized) || undefined,
+          currentTenantId: superTenantId || undefined,
+          tenants: normalized.tenants,
+          tenantRole,
+        } as any);
+        setUser({ ...normalized, tenants: normalized.tenants, currentTenantId: superTenantId || undefined, tenantRole } as User);
+        setLoading(false);
+        return;
       }
 
-      // Use stored tenant ID if not in response
-      if (!extractedTenantId) {
-        extractedTenantId = getCurrentTenantId();
+      // ----- Non-superadmin: tenant selection logic -----
+      if (memberships.length === 0) {
+        setNoAccess(true);
+        setNeedsTenantSelection(false);
+        setCurrentTenantIdState(null);
+        clearCurrentTenantId();
+        setLoading(false);
+        return;
       }
 
-      // Store tenant ID if found
-      if (extractedTenantId) {
-        setCurrentTenantId(extractedTenantId);
-        setCurrentTenantIdState(extractedTenantId);
-        console.log(`✅ Current tenant ID: ${extractedTenantId}`);
+      setNoAccess(false);
+
+      let effectiveTenantId: string | null = null;
+      if (memberships.length === 1) {
+        const single = memberships[0].tenantId;
+        setCurrentTenantId(single);
+        setCurrentTenantIdState(single);
+        setNeedsTenantSelection(false);
+        effectiveTenantId = single;
       } else {
-        console.warn('⚠️ No tenant ID found in user data');
-        // Don't clear existing tenant ID if response doesn't have it
-        const existingTenantId = getCurrentTenantId();
-        if (existingTenantId) {
-          setCurrentTenantIdState(existingTenantId);
+        if (storedTenantId && memberships.some((m) => m.tenantId === storedTenantId)) {
+          setCurrentTenantIdState(storedTenantId);
+          setNeedsTenantSelection(false);
+          effectiveTenantId = storedTenantId;
+        } else {
+          setCurrentTenantIdState(null);
+          clearCurrentTenantId();
+          setNeedsTenantSelection(true);
+          effectiveTenantId = null;
         }
       }
 
-      // Store user data
-      if (userData) {
-        const storedUser = {
-          id: userData.id,
-          username: userData.username || userData.email,
-          email: userData.email,
-          role: userData.role,
-          tenant: userData.tenant,
-          tenantId: extractedTenantId || userData.tenantId,
-          currentTenantId: extractedTenantId,
-          tenants: userData.tenants,
-        };
-        storeUser(storedUser);
-        setUser({
-          ...userData,
-          currentTenantId: extractedTenantId || null,
-          tenants: userData.tenants,
-        } as User);
-      }
+      // Derive tenantRole from selected tenant (currentTenantId if valid, else first membership)
+      const tenantRole = getTenantRoleFromMemberships(memberships, effectiveTenantId);
+      const finalTenantId = effectiveTenantId || getFirstTenantId(normalized);
+
+      // Persist tenantRole and effective tenantId
+      storeUser({
+        id: normalized.id,
+        username: normalized.username || normalized.email,
+        email: normalized.email,
+        role: normalized.role,
+        tenant: normalized.tenant,
+        tenantId: finalTenantId || undefined,
+        currentTenantId: finalTenantId || undefined,
+        tenants: normalized.tenants,
+        tenantRole,
+      } as any);
+      setUser({ ...normalized, tenants: normalized.tenants, currentTenantId: finalTenantId || undefined, tenantRole } as User);
+      console.log("✅ AuthContext setUser payload:", {
+        email: normalized.email,
+        globalRole: normalized.role,
+        finalTenantId,
+        tenantRole,
+        memberships: memberships.map(m => ({ tenantId: m.tenantId, role: m.role, isActive: m.isActive })),
+      });
+      setLoading(false);
     } catch (error) {
-      console.error('Failed to refresh user:', error);
-      // Fallback to stored user and ensure tenant ID is in storage for future requests
-      const storedUser = getUser();
-      let storedTenantId = getCurrentTenantId();
-      if (storedUser) {
-        const fromUser =
-          storedUser.tenantId ||
-          (storedUser as any)?.currentTenantId ||
-          (Array.isArray((storedUser as any)?.tenants) && (storedUser as any).tenants[0]
-            ? (storedUser as any).tenants[0].tenantId
-            : null);
-        if (fromUser && !storedTenantId) {
-          setCurrentTenantId(fromUser);
-          storedTenantId = fromUser;
-        }
-        setUser(storedUser as User);
-        setCurrentTenantIdState(storedTenantId);
+      console.error('Refresh user error:', error);
+      const fallback = getUser();
+      if (fallback) {
+        setUser(fallback as User);
+        setCurrentTenantIdState(getCurrentTenantId());
       }
-    } finally {
+      setNeedsTenantSelection(false);
+      setNoAccess(false);
       setLoading(false);
     }
   };
 
   const handleSetCurrentTenantId = (tenantId: string | null) => {
-    if (tenantId) {
+    if (tenantId != null && tenantId !== '') {
       setCurrentTenantId(tenantId);
       setCurrentTenantIdState(tenantId);
-      // Update user context with new tenant ID
+      setNeedsTenantSelection(false);
       if (user) {
-        setUser({ ...user, currentTenantId: tenantId });
+        const tenantRole = getTenantRoleFromMemberships(getMemberships(user), tenantId);
+        const next = { ...user, currentTenantId: tenantId, tenantRole };
+        setUser(next);
+        storeUser({ ...user, currentTenantId: tenantId, tenantRole } as any);
       }
     } else {
-      // Clear tenant ID
-      const { clearCurrentTenantId } = require('../utils/authStorage');
       clearCurrentTenantId();
       setCurrentTenantIdState(null);
-      if (user) {
-        setUser({ ...user, currentTenantId: undefined });
-      }
+      if (user) setUser({ ...user, currentTenantId: undefined });
+      const superadmin = isSuperAdminFromUser(user);
+      if (!superadmin && getMemberships(user ?? {}).length > 1) setNeedsTenantSelection(true);
     }
   };
 
   useEffect(() => {
-    // Initialize user on mount
-    const initUser = async () => {
+    const init = async () => {
       const token = getToken();
       if (token) {
-        // Load stored tenant ID first
-        const storedTenantId = getCurrentTenantId();
-        if (storedTenantId) {
-          setCurrentTenantIdState(storedTenantId);
-        }
+        const stored = getCurrentTenantId();
+        if (stored) setCurrentTenantIdState(stored);
+        const storedUser = getUser();
+        if (storedUser) setUser(storedUser as User);
         await refreshUser();
       } else {
         setLoading(false);
       }
     };
-    initUser();
+    init();
   }, []);
+
+  const isSuperAdmin = isSuperAdminFromUser(user);
+  const hasTenantContext = currentTenantId != null && currentTenantId !== '';
+  const selectedTenantName =
+    hasTenantContext && user?.tenants
+      ? (user.tenants.find((t) => t.tenantId === currentTenantId)?.tenantName ?? user.tenants.find((t) => t.tenantId === currentTenantId)?.tenant ?? currentTenantId)
+      : null;
 
   return (
     <AuthContext.Provider
@@ -188,6 +300,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentTenantId: handleSetCurrentTenantId,
         refreshUser,
         isAuthenticated: !!user,
+        isSuperAdmin,
+        hasTenantContext,
+        needsTenantSelection,
+        noAccess,
+        selectedTenantName: isSuperAdmin && !hasTenantContext ? 'SuperAdmin' : selectedTenantName,
       }}>
       {children}
     </AuthContext.Provider>

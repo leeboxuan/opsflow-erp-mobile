@@ -17,6 +17,24 @@ React Native CLI mobile application for OpsFlow - Transport Management System.
 npm install
 ```
 
+### Maps (react-native-maps)
+
+The app uses `react-native-maps` for the driver trip execution map. Install the Expo-compatible version:
+
+```bash
+npx expo install react-native-maps
+```
+
+**Rebuild after adding or updating native modules (e.g. react-native-maps):**
+
+```bash
+npx expo prebuild --clean
+npx expo run:android --device
+# or for iOS: npx expo run:ios --device
+```
+
+Use `prebuild --clean` when you change native config (e.g. `app.json`, new native modules). Use `run:android` / `run:ios` for normal development builds.
+
 ### Google Maps API Key (Required for Map Features)
 
 The app uses Google Maps for live driver location tracking. You need to configure your Google Maps API key:
@@ -115,11 +133,12 @@ Configuration is in `src/config/env.ts`.
 - Location updates are sent to the API every 5 seconds or when moved >20 meters
 - Location tracking respects the share preference and stops on logout
 
-### Admin Live Map
+### Admin trip live map
 
-- Admin users can view all active drivers on a live map
-- Driver locations are polled every 5 seconds
-- Map shows driver markers with labels and last updated time
+- Admin users see live driver location **inside Trip Details** only (no global map tab)
+- When a trip is active (Dispatched / In Transit) and has an assigned driver, the Trip Details screen shows a "Live Location" map with the driver marker and "Updated Xs ago"
+- Location is fetched via GET `/trips/:tripId/location` (or fallback GET `/transport/drivers/:driverId/location`) and polled every 7 seconds while the screen is focused
+- When the trip is not active or has no driver, the map shows: "Live location is available when trip is in progress."
 
 ## Project Structure
 
@@ -186,9 +205,10 @@ This can happen if the Nitro native library (used by `react-native-mmkv`) wasnâ€
 
 ### Location tracking not working
 
-- Ensure location permissions are granted on the device
-- Check that "Share Live Location" toggle is enabled in Driver Map screen
+- Ensure location permissions are granted on the device (foreground and background for Android)
+- Location tracking is automatic during active trips (Dispatched / In Transit); no toggle required
 - Verify the device has location services enabled
+- If the map shows "Location permission is required", tap **Open Settings** and enable location for the app
 
 ## License
 

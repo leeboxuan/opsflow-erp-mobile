@@ -15,6 +15,11 @@ export interface LoginResponse {
   };
 }
 
+/** Profile from profiles table (e.g. global_role for superadmin). */
+export interface UserProfile {
+  global_role?: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -23,7 +28,11 @@ export interface User {
   tenant?: string;
   tenantId?: string;
   currentTenantId?: string;
+  /** Role in the selected tenant (from tenantMemberships[].role); used for stack/mode. */
+  tenantRole?: string;
   tenants?: TenantMembership[];
+  /** From profiles table; used to compute isSuperAdmin (global_role === 'SUPERADMIN'). */
+  profile?: UserProfile;
 }
 
 export interface TenantMembership {
@@ -62,6 +71,7 @@ export interface Stop {
   type: 'PICKUP' | 'DELIVERY' | 'Pickup' | 'Delivery';
   addressLine1: string;
   city?: string;
+  postalCode?: string;
   plannedAt: string; // ISO date string
   transportOrderId?: string;
   pod?: Pod;
@@ -78,6 +88,8 @@ export interface Trip {
   driverId?: string;
   vehicleId?: string;
   stops: Stop[];
+  /** Incremented when route/stops are changed (reorder, move, unassign); used for update detection */
+  routeVersion?: number;
   // Legacy/convenience for UI that expects tripNumber, origin, destination
   tripNumber?: string;
   origin?: string;
@@ -99,9 +111,19 @@ export interface OrderStop {
   plannedAt: string; // ISO date string
 }
 
+/** Line item for create order (inventory item + quantity) */
+export interface CreateOrderItem {
+  inventoryItemId: string;
+  quantity: number;
+}
+
 export interface CreateOrderRequest {
+  /** Client-generated order ref (e.g. OF-SG-YYYYMMDD-XXXX) for DO signing */
+  orderRef: string;
   customerName: string;
   stops: OrderStop[];
+  /** Optional line items (inventory) */
+  items?: CreateOrderItem[];
 }
 
 export interface Order {
@@ -112,4 +134,23 @@ export interface Order {
   status?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+// Places (Google Places Autocomplete / backend proxy)
+export interface PlacePrediction {
+  placeId: string;
+  description: string;
+}
+
+export interface PlaceDetails {
+  formattedAddress: string;
+  postalCode?: string;
+}
+
+// Inventory (for order line items)
+export interface InventoryItem {
+  id: string;
+  sku?: string;
+  name?: string;
+  reference?: string;
 }

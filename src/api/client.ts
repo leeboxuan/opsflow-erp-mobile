@@ -2,6 +2,10 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { ENV } from '../config/env';
 import { getToken, clearToken } from '../shared/utils/authStorage';
 import { getCurrentTenantId } from '../shared/utils/authStorage';
+import { refreshToken } from './auth';
+
+/** In-memory lock: only one refresh in flight; concurrent 401s wait on the same promise */
+let refreshPromise: Promise<string | null> | null = null;
 
 // Request log storage for diagnostics (in-memory, last 10 requests)
 interface RequestLog {
@@ -46,14 +50,13 @@ console.log('  Axios baseURL:', `${cleanBaseUrl}/api`);
 // Request interceptor: Add JWT token and x-tenant-id header
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // MMKV getToken is synchronous
-    const token = getToken();
+    const isLoginRequest = typeof config.url === 'string' && config.url.includes('/auth/login');
+    const token = isLoginRequest ? null : getToken();
+    const tenantId = isLoginRequest ? null : getCurrentTenantId();
+
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-
-    // Add x-tenant-id header if currentTenantId exists
-    const tenantId = getCurrentTenantId();
     if (tenantId && config.headers) {
       config.headers['x-tenant-id'] = tenantId; // Exact header name: lowercase
     }
@@ -104,11 +107,12 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const fullUrl = error.config?.baseURL
-      ? `${error.config.baseURL}${error.config.url || ''}`
-      : error.config?.url || '';
+    const config = error.config as (InternalAxiosRequestConfig & { _retried?: boolean }) | undefined;
+    const fullUrl = config?.baseURL
+      ? `${config.baseURL}${config.url || ''}`
+      : config?.url || '';
     const status = error.response?.status;
-    const method = error.config?.method?.toUpperCase() || 'UNKNOWN';
+    const method = config?.method?.toUpperCase() || 'UNKNOWN';
 
     // Log error to console
     if (error.response) {
@@ -126,11 +130,64 @@ apiClient.interceptors.response.use(
       requestLogs[0].error = error.message || 'Unknown error';
     }
 
-    // Handle 401 Unauthorized - token expired or invalid
-    if (error.response?.status === 401) {
-      // Clear stored token (synchronous)
+    // 401: refresh token (POST /auth/refresh), retry request once, in-memory refresh lock.
+    // Only clear tokens and surface auth error if refresh fails or retry still returns 401.
+    if (error.response?.status === 401 && config) {
+      const data = error.response?.data;
+      const isTokenExpired = (() => {
+        if (data == null || typeof data !== 'object') return true; // 401 with no body: assume token expiry
+        const msg = String(
+          (data as { message?: string; error?: string }).message ??
+            (data as { message?: string; error?: string }).error ??
+            ''
+        ).toLowerCase();
+        if (!msg) return true; // 401 with empty message: assume token expiry
+        return (
+          (msg.includes('expired') || msg.includes('invalid')) &&
+          (msg.includes('token') || msg.includes('jwt'))
+        );
+      })();
+
+      if (!isTokenExpired) {
+        clearToken();
+        return Promise.reject({
+          message: 'Session expired. Please sign in again.',
+          isAuthError: true,
+          statusCode: 401,
+        });
+      }
+
+      // Already retried once with new token and still 401: clear and logout
+      if (config._retried) {
+        clearToken();
+        return Promise.reject({
+          message: 'Session expired. Please sign in again.',
+          isAuthError: true,
+          statusCode: 401,
+        });
+      }
+
+      // In-memory lock: only one refresh in flight; concurrent 401s wait on the same promise
+      if (!refreshPromise) {
+        refreshPromise = refreshToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      try {
+        const newToken = await refreshPromise;
+        if (newToken) {
+          config._retried = true;
+          return apiClient.request(config);
+        }
+      } catch (_e) {
+        // refresh failed; fall through to clearToken
+      }
       clearToken();
-      // Navigation will be handled by the app's auth context/navigation
+      return Promise.reject({
+        message: 'Session expired. Please sign in again.',
+        isAuthError: true,
+        statusCode: 401,
+      });
     }
 
     // Handle network errors
